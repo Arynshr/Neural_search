@@ -1,17 +1,63 @@
 [project]
-name = "neural-search"
+name = "neural_search"
 version = "0.1.0"
-description = "Add your description here"
+description = "Side-by-side comparison of BM25 lexical search vs dense neural retrieval on MS MARCO"
 readme = "README.md"
 authors = [
     { name = "Aryanshr", email = "Arynshr@users.noreply.github.com" }
 ]
-requires-python = ">=3.13"
-dependencies = []
+requires-python = ">=3.11"
+
+dependencies = [
+    # Data
+    "datasets>=2.18.0",
+    "pandas>=2.0.0",
+    "jsonlines>=4.0.0",
+    "nltk>=3.8.0",
+    "pyyaml>=6.0.1",
+    "tqdm>=4.66.0",
+
+    # Lexical search
+    "rank-bm25>=0.2.2",
+    "scikit-learn>=1.4.0",
+
+    # Neural search
+    "sentence-transformers>=2.7.0",
+    "faiss-cpu>=1.8.0",
+    "torch>=2.2.0",
+    "transformers>=4.40.0",
+
+    # Evaluation
+    "ranx>=0.3.16",
+    "scipy>=1.13.0",
+
+    # API
+    "fastapi>=0.111.0",
+    "uvicorn>=0.29.0",
+    "pydantic>=2.7.0",
+
+    # Tracking & logging
+    "mlflow>=2.12.0",
+    "loguru>=0.7.2",
+
+    # Utils
+    "python-dotenv>=1.0.0",
+    "pathlib>=1.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+    "jupyter>=1.0.0",
+    "ipykernel>=6.29.0",
+]
 
 [project.scripts]
-neural-search = "neural_search:main"
+search-api = "search_comparison.api.main:app"
 
 [build-system]
 requires = ["uv_build>=0.10.4,<0.11.0"]
 build-backend = "uv_build"
+
+[tool.setuptools.packages.find]
+where = ["src"]
