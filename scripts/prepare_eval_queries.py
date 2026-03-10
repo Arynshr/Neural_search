@@ -15,21 +15,23 @@ queries = []
 qrels = {}
 MAX_QUERIES = 500
 
-for item in tqdm(ds, desc="Processing queries", total=MAX_QUERIES):
+pbar = tqdm(ds, desc="Processing queries")
+for item in pbar:
     qid = str(item["query_id"])
     query_text = item["query"].strip()
     passages = item["passages"]["passage_text"]
     is_selected = item["passages"]["is_selected"]
 
-    if 1 not in is_selected:          
+    if 1 not in is_selected:
         continue
 
     queries.append({"id": qid, "text": query_text})
-
     qrels[qid] = {}
     for j, selected in enumerate(is_selected):
         if selected == 1:
             qrels[qid][f"{qid}_{j}"] = 1
+
+    pbar.set_postfix({"saved": len(queries), "target": MAX_QUERIES})
 
     if len(queries) >= MAX_QUERIES:
         break
