@@ -13,7 +13,7 @@ total_passages = 0
 with jsonlines.open(BASE / "data" / "raw" / "corpus.jsonl", "w") as f:
     for i, item in enumerate(tqdm(ds, desc="Downloading corpus", total=50_000)):
         for j, text in enumerate(item["passages"]["passage_text"]):
-            f.write({"id": f"{i}_{j}", "text": text})
+            f.write({"id": f"{item['query_id']}_{j}", "text": text})
             total_passages += 1
         if i >= 50_000:
             break

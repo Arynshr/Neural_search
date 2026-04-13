@@ -1,0 +1,21 @@
+{
+  "n_queries": 500,
+  "mean_ms": 9.37,
+  "std_ms": 3.2,
+  "min_ms": 0.64,
+  "p25_ms": 8.91,
+  "p50_ms": 9.95,
+  "p75_ms": 11.34,
+  "p95_ms": 13.41,
+  "p99_ms": 15.09,
+  "max_ms": 20.04,
+  "total_wall_ms": 4693.7,
+  "throughput_qps": 106.5,
+  "top_k": 10,
+  "corpus_size": 410809,
+  "sla_p50_ms": 50.0,
+  "sla_p95_ms": 200.0,
+  "p50_sla_pass": true,
+  "p95_sla_pass": true,
+  "n_slow_queries": 0
+}
