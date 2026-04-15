@@ -1,7 +1,7 @@
 [project]
 name = "neural_search"
 version = "0.1.0"
-description = "Side-by-side comparison of BM25 lexical search vs dense neural retrieval on MS MARCO"
+description = "Hybrid semantic search over PDF/DOCX documents using BM25 + dense retrieval + RRF"
 readme = "README.md"
 authors = [
     { name = "Aryanshr", email = "Arynshr@users.noreply.github.com" }
@@ -9,49 +9,55 @@ authors = [
 requires-python = ">=3.11"
 
 dependencies = [
-    # Data
-    "datasets>=2.18.0",
-    "pandas>=2.0.0",
-    "jsonlines>=4.0.0",
+    # Document parsing
+    "pymupdf>=1.24.0",
+    "python-docx>=1.1.0",
+
+    # Chunking
+    "langchain-text-splitters>=0.2.0",
+
+    # Sparse retrieval
+    "bm25s>=0.1.10",
     "nltk>=3.8.0",
-    "pyyaml>=6.0.1",
-    "tqdm>=4.66.0",
-    "scikit-learn>=1.4.0",
-    # Neural search
-    "sentence-transformers>=2.7.0",
-    "faiss-cpu>=1.8.0",
-    "torch>=2.2.0",
-    "transformers>=4.40.0",
-    # Evaluation
-    "ranx>=0.3.16",
-    "scipy>=1.13.0",
+
+    # Dense retrieval
+    "sentence-transformers>=3.0.0",
+    "qdrant-client>=1.9.0",
+
+    # Inference
+    "groq>=0.9.0",
+
     # API
     "fastapi>=0.111.0",
     "uvicorn>=0.29.0",
     "pydantic>=2.7.0",
-    # Tracking & logging
-    "mlflow>=2.12.0",
-    "loguru>=0.7.2",
+    "pydantic-settings>=2.3.0",
+
+    # UI
+    "streamlit>=1.35.0",
+
     # Utils
+    "loguru>=0.7.2",
     "python-dotenv>=1.0.0",
-    "pathlib>=1.0.1",
-    "bm25s>=0.3.2",
-    "textual>=8.1.1",
+    "tqdm>=4.66.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
     "jupyter>=1.0.0",
     "ipykernel>=6.29.0",
 ]
 
 [project.scripts]
-search-api = "search_comparison.api.main:app"
+neural-search-api = "neural_search.api.main:app"
+neural-search-ui = "streamlit run ui/app.py"
+ingest = "scripts.ingest_documents:main"
 
 [build-system]
-requires = ["uv_build>=0.10.4,<0.11.0"]
-build-backend = "uv_build"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/neural_search"]
