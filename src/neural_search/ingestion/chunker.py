@@ -1,5 +1,5 @@
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from loguru import logger
 from neural_search.config import settings
@@ -14,7 +14,8 @@ class Chunk:
     page: int
     chunk_index: int
     text: str
-    metadata: dict
+    token_count: int
+    metadata: dict = field(default_factory=dict)
 
 
 def _make_chunk_id(source_file: str, chunk_index: int) -> str:
@@ -39,13 +40,15 @@ def chunk_pages(pages: list[ParsedPage]) -> list[Chunk]:
             continue
 
         for i, text in enumerate(splits):
+            clean_text = text.strip()
             chunk = Chunk(
                 chunk_id=_make_chunk_id(page.source_file, global_index),
                 doc_id=page.doc_id,
                 source_file=page.source_file,
                 page=page.page,
                 chunk_index=global_index,
-                text=text.strip(),
+                text=clean_text,
+                token_count=len(clean_text.split()),
                 metadata={**page.metadata, "split_index": i},
             )
             all_chunks.append(chunk)
