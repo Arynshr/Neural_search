@@ -1,60 +1,70 @@
 import streamlit as st
 import requests
-from neural_search.config import settings
 
 API_BASE = "http://localhost:8000"
 
 
 def render_sidebar() -> dict:
-    """
-    Renders sidebar controls and index stats.
-    Returns a dict of user-selected options.
-    """
-    st.sidebar.title("⚙️ Neural Search")
+    st.sidebar.title("🔍 Neural Search")
+    st.sidebar.caption("Hybrid semantic search")
     st.sidebar.markdown("---")
 
-    # Index stats
-    st.sidebar.subheader("Index Status")
+    # Load collections
     try:
-        resp = requests.get(f"{API_BASE}/health", timeout=3)
-        if resp.status_code == 200:
-            health = resp.json()
-            col1, col2 = st.sidebar.columns(2)
-            col1.metric("BM25 Chunks", health["bm25_chunks"])
-            col2.metric("Qdrant Points", health["qdrant_points"])
-            sync = health["index_in_sync"]
-            st.sidebar.success("Indexes in sync ✓") if sync else st.sidebar.error("Index drift detected ✗")
-        else:
-            st.sidebar.warning("API unavailable")
+        resp = requests.get(f"{API_BASE}/collections", timeout=3)
+        collections = resp.json() if resp.status_code == 200 else []
     except Exception:
-        st.sidebar.error("Cannot reach API — is it running?")
+        st.sidebar.error("⚠️ API unreachable")
+        return {"collection": None, "mode": "hybrid", "top_k": 5, "synthesize": False}
+
+    # Collection switcher
+    st.sidebar.subheader("🗂 Collections")
+    if not collections:
+        st.sidebar.info("No collections yet — create one in the Collections tab")
+        active_slug = None
+    else:
+        col_options = {c["name"]: c["slug"] for c in collections}
+        col_labels = list(col_options.keys())
+
+        # Restore last used collection
+        default_idx = 0
+        if "active_collection" in st.session_state:
+            saved = st.session_state.active_collection
+            matching = [i for i, s in enumerate(col_options.values()) if s == saved]
+            if matching:
+                default_idx = matching[0]
+
+        selected_name = st.sidebar.radio(
+            "Active collection",
+            col_labels,
+            index=default_idx,
+            label_visibility="collapsed",
+        )
+        active_slug = col_options[selected_name]
+        st.session_state.active_collection = active_slug
+
+        # Stats for active collection
+        active = next(c for c in collections if c["slug"] == active_slug)
+        c1, c2 = st.sidebar.columns(2)
+        c1.metric("Files", len(active["files"]))
+        c2.metric("Chunks", active["total_chunks"])
+        st.sidebar.caption(f"Updated: {active['updated_at'][:10]}")
 
     st.sidebar.markdown("---")
 
     # Search options
-    st.sidebar.subheader("Search Options")
+    st.sidebar.subheader("⚙️ Search Options")
     mode = st.sidebar.selectbox(
         "Retrieval Mode",
-        options=["hybrid", "sparse", "dense"],
-        index=0,
-        help="hybrid = BM25 + Dense + RRF | sparse = BM25 only | dense = Qdrant only",
+        ["hybrid", "sparse", "dense"],
+        help="hybrid = BM25 + Neural + RRF",
     )
-    top_k = st.sidebar.slider("Top K Results", min_value=1, max_value=20, value=5)
-    synthesize = st.sidebar.toggle("Generate Answer (Groq)", value=False)
+    top_k = st.sidebar.slider("Top K Results", 1, 20, 5)
+    synthesize = st.sidebar.toggle("🤖 Generate Answer (Groq)", value=False)
 
-    st.sidebar.markdown("---")
-
-    # Reset index
-    st.sidebar.subheader("Danger Zone")
-    if st.sidebar.button("🗑️ Reset Both Indexes", type="secondary"):
-        try:
-            r = requests.delete(f"{API_BASE}/index", timeout=10)
-            if r.status_code == 200:
-                st.sidebar.success("Indexes reset successfully")
-                st.rerun()
-            else:
-                st.sidebar.error("Reset failed")
-        except Exception as e:
-            st.sidebar.error(f"Error: {e}")
-
-    return {"mode": mode, "top_k": top_k, "synthesize": synthesize}
+    return {
+        "collection": active_slug,
+        "mode": mode,
+        "top_k": top_k,
+        "synthesize": synthesize,
+    }
