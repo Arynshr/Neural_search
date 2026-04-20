@@ -13,11 +13,10 @@ class Settings(BaseSettings):
     groq_api_key: str
     groq_model: str = "llama3-8b-8192"
 
-    # Qdrant
+    # Qdrant — collections are named dynamically; this is the storage root
     qdrant_path: Path = Path("./data/qdrant")
-    qdrant_collection: str = "neural_search"
 
-    # BM25
+    # BM25 — root dir; each collection gets its own subdir
     bm25_index_path: Path = Path("./data/bm25_index")
 
     # Embedding
@@ -31,12 +30,17 @@ class Settings(BaseSettings):
     top_k: int = 10
     rrf_k: int = 60
 
-    # Paths
-    documents_dir: Path = Path("./data/documents")
+    # Data root
+    data_dir: Path = Path("./data")
+
+    def bm25_path_for(self, collection_slug: str) -> Path:
+        return self.bm25_index_path / collection_slug
+
+    def documents_path_for(self, collection_slug: str) -> Path:
+        return self.data_dir / "documents" / collection_slug
 
     def ensure_dirs(self) -> None:
-        """Create all required data directories if they don't exist."""
-        for path in [self.qdrant_path, self.bm25_index_path, self.documents_dir]:
+        for path in [self.qdrant_path, self.bm25_index_path, self.data_dir]:
             path.mkdir(parents=True, exist_ok=True)
 
 

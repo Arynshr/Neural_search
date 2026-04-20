@@ -15,20 +15,20 @@ except ImportError:
 
 
 class BM25sRetriever:
-    def __init__(self):
+    def __init__(self, collection_slug: str):
+        self._slug = collection_slug
         self._index = None
         self._chunks: list[Chunk] = []
-        self._index_file = settings.bm25_index_path / "bm25.pkl"
-        self._chunks_file = settings.bm25_index_path / "chunks.pkl"
-        settings.bm25_index_path.mkdir(parents=True, exist_ok=True)
+        self._dir = settings.bm25_path_for(collection_slug)
+        self._dir.mkdir(parents=True, exist_ok=True)
+        self._index_file = self._dir / "bm25.pkl"
+        self._chunks_file = self._dir / "chunks.pkl"
 
     def _tokenize(self, texts: list[str]) -> list[list[str]]:
-        tokenized = []
-        for text in texts:
-            tokens = text.lower().split()
-            tokens = [t for t in tokens if t.isalpha() and t not in _STOPWORDS]
-            tokenized.append(tokens)
-        return tokenized
+        return [
+            [t for t in text.lower().split() if t.isalpha() and t not in _STOPWORDS]
+            for text in texts
+        ]
 
     def index(self, chunks: list[Chunk]) -> None:
         self._chunks = chunks
@@ -39,7 +39,7 @@ class BM25sRetriever:
             pickle.dump(self._index, f)
         with open(self._chunks_file, "wb") as f:
             pickle.dump(self._chunks, f)
-        logger.info(f"BM25 index built and saved — {len(chunks)} chunks")
+        logger.info(f"[{self._slug}] BM25 index built — {len(chunks)} chunks")
 
     def load(self) -> bool:
         if self._index_file.exists() and self._chunks_file.exists():
@@ -47,34 +47,34 @@ class BM25sRetriever:
                 self._index = pickle.load(f)
             with open(self._chunks_file, "rb") as f:
                 self._chunks = pickle.load(f)
-            logger.info(f"BM25 index loaded — {len(self._chunks)} chunks")
+            logger.info(f"[{self._slug}] BM25 index loaded — {len(self._chunks)} chunks")
             return True
-        logger.warning("BM25 index not found — run ingestion first")
         return False
 
     def search(self, query: str, k: int = None) -> list[dict]:
         if self._index is None:
             self.load()
-        k = k or settings.top_k
-        query_tokens = self._tokenize([query])[0]
+        if not self._chunks:
+            return []
+        k = min(k or settings.top_k, len(self._chunks))
         results, scores = self._index.retrieve(
-            bm25s.tokenize(query, stopwords=_STOPWORDS), corpus=None, k=min(k, len(self._chunks))
+            bm25s.tokenize(query, stopwords=_STOPWORDS), corpus=None, k=k
         )
         max_score = max(scores[0]) if max(scores[0]) > 0 else 1.0
-        output = []
-        for rank, (idx, score) in enumerate(zip(results[0], scores[0]), start=1):
-            chunk = self._chunks[idx]
-            output.append({
-                "chunk_id": chunk.chunk_id,
-                "score": float(score) / max_score,   # normalized to [0,1]
+        return [
+            {
+                "chunk_id": self._chunks[idx].chunk_id,
+                "score": float(score) / max_score,
                 "rank": rank,
                 "source": "sparse",
-                "text": chunk.text,
-                "source_file": chunk.source_file,
-                "page": chunk.page,
-                "token_count": chunk.token_count,
-            })
-        return output
+                "text": self._chunks[idx].text,
+                "source_file": self._chunks[idx].source_file,
+                "page": self._chunks[idx].page,
+                "token_count": self._chunks[idx].token_count,
+                "collection": self._slug,
+            }
+            for rank, (idx, score) in enumerate(zip(results[0], scores[0]), start=1)
+        ]
 
     def count(self) -> int:
         if not self._chunks:
@@ -87,4 +87,4 @@ class BM25sRetriever:
         for f in [self._index_file, self._chunks_file]:
             if f.exists():
                 f.unlink()
-        logger.info("BM25 index wiped")
+        logger.info(f"[{self._slug}] BM25 index wiped")

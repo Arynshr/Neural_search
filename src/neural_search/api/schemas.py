@@ -2,11 +2,39 @@ from pydantic import BaseModel, Field
 from typing import Literal
 
 
+# ── Collections ───────────────────────────────────────────────────────────────
+class CreateCollectionRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64)
+    description: str = Field(default="", max_length=256)
+
+
+class FileRecord(BaseModel):
+    filename: str
+    pages: int
+    chunks: int
+    tokens: int
+    ingested_at: str
+    status: str = "ok"
+
+
+class CollectionMeta(BaseModel):
+    slug: str
+    name: str
+    description: str
+    created_at: str
+    updated_at: str
+    files: list[FileRecord]
+    total_chunks: int
+    total_tokens: int
+
+
+# ── Search ────────────────────────────────────────────────────────────────────
 class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
+    collection: str                             # slug of active collection
     k: int = Field(default=10, ge=1, le=50)
-    synthesize: bool = Field(default=False)
-    mode: Literal["hybrid", "sparse", "dense"] = Field(default="hybrid")
+    synthesize: bool = False
+    mode: Literal["hybrid", "sparse", "dense"] = "hybrid"
 
 
 class ChunkResult(BaseModel):
@@ -17,7 +45,8 @@ class ChunkResult(BaseModel):
     text: str
     score: float
     rank: int
-    source: str       # sparse | dense | dense+sparse
+    source: str
+    collection: str
 
 
 class SynthesisResult(BaseModel):
@@ -28,6 +57,7 @@ class SynthesisResult(BaseModel):
 
 class SearchResponse(BaseModel):
     query: str
+    collection: str
     mode: str
     results: list[ChunkResult]
     synthesis: SynthesisResult | None = None
@@ -36,20 +66,25 @@ class SearchResponse(BaseModel):
 
 class DebugResponse(BaseModel):
     query: str
+    collection: str
     sparse: list[dict]
     dense: list[dict]
     hybrid_rrf: list[dict]
 
 
-class HealthResponse(BaseModel):
-    status: str
-    bm25_chunks: int
-    qdrant_points: int
-    index_in_sync: bool
-
-
+# ── Ingest ────────────────────────────────────────────────────────────────────
 class IngestResponse(BaseModel):
     status: str
+    collection: str
+    filename: str
     chunks_indexed: int
-    files_processed: int
+    tokens: int
+    pages: int
     warnings: list[str] = []
+
+
+# ── Health ────────────────────────────────────────────────────────────────────
+class HealthResponse(BaseModel):
+    status: str
+    collections_count: int
+    total_chunks: int
