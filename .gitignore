@@ -28,6 +28,8 @@ ENV/
 data/raw/
 data/processed/
 data/indices/
+.pdf
+.json
 
 # --- ML Artifacts (large binaries) ---
 artifacts/models/
@@ -56,6 +58,7 @@ notebooks/.ipynb_checkpoints/
 # --- Logs ---
 logs/
 *.log
+*.api.pid
 
 # --- Test & coverage ---
 .pytest_cache/

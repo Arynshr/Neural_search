@@ -52,7 +52,6 @@ dev = [
 
 [project.scripts]
 neural-search-api = "neural_search.api.main:app"
-neural-search-ui = "streamlit run ui/app.py"
 ingest = "scripts.ingest_documents:main"
 
 [build-system]
