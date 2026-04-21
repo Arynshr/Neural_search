@@ -1,5 +1,13 @@
 """
 Evaluation runner — compares BM25, Dense, and Hybrid RRF.
+
+Requires:
+  evaluation/queries.json   — [{"id": "q1", "text": "..."}]
+  evaluation/relevance.json — {"q1": ["chunk_id_1", ...], ...}
+
+Usage:
+    python scripts/run_eval.py --collection <slug>
+    python scripts/run_eval.py --collection <slug> --k 5
 """
 import json
 import argparse
@@ -15,11 +23,11 @@ EVAL_DIR = Path("evaluation")
 
 
 def load_eval_data():
+    # #21: support both spellings — relevance.json (correct) and relevence.json (legacy)
     queries_path = EVAL_DIR / "queries.json"
     relevance_path = EVAL_DIR / "relevance.json"
     if not relevance_path.exists():
-        relevance_path = EVAL_DIR / "relevence.json"
-
+        relevance_path = EVAL_DIR / "relevence.json"   # legacy typo fallback
     if not queries_path.exists() or not relevance_path.exists():
         logger.error(
             "Eval data not found. Expected:\n"
@@ -27,12 +35,12 @@ def load_eval_data():
             "  evaluation/relevance.json"
         )
         raise FileNotFoundError("Missing eval data files")
-
     with open(queries_path) as f:
         queries = json.load(f)
     with open(relevance_path) as f:
         relevance = json.load(f)
 
+    # #10: warn clearly if placeholder chunk IDs are still present
     placeholder = "<chunk_id_from_verify_index>"
     for qid, ids in relevance.items():
         if any(i == placeholder for i in ids):
@@ -40,13 +48,13 @@ def load_eval_data():
                 f"Query '{qid}' has placeholder relevance IDs — "
                 "metrics will be 0.0. Run verify_index.py and update relevance.json."
             )
-
     return queries, relevance
 
 
 def main():
     parser = argparse.ArgumentParser(description="Neural Search — Evaluation Runner")
     parser.add_argument("--k", type=int, default=10)
+    # #1: collection_slug is now required — retrievers need it
     parser.add_argument(
         "--collection",
         required=True,
@@ -54,12 +62,10 @@ def main():
     )
     args = parser.parse_args()
 
-    if args.k < 1 or args.k > 100:
-        raise ValueError("k must be between 1 and 100")
-
     settings.ensure_dirs()
     queries, relevance = load_eval_data()
 
+    # #1: pass collection_slug to all retrievers
     sparse = BM25sRetriever(collection_slug=args.collection)
     sparse.load()
     dense = QdrantRetriever(collection_slug=args.collection)
@@ -68,49 +74,36 @@ def main():
     retrievers = {
         "BM25 (sparse)": lambda q, k: [r["chunk_id"] for r in sparse.search(q, k=k)],
         "Dense (Qdrant)": lambda q, k: [r["chunk_id"] for r in dense.search(q, k=k)],
-        "Hybrid (RRF)": lambda q, k: [r["chunk_id"] for r in hybrid.search(q, k=k)],
+        "Hybrid (RRF)":   lambda q, k: [r["chunk_id"] for r in hybrid.search(q, k=k)],
     }
 
     results_agg: dict[str, list[dict]] = {name: [] for name in retrievers}
 
     for query in queries:
-        qid = query.get("id")
-        qtext = query.get("text", "").strip()
-
-        if not qid or not qtext:
-            logger.warning(f"Invalid query entry skipped: {query}")
-            continue
-
+        qid = query["id"]
+        qtext = query["text"]
         relevant = set(relevance.get(qid, []))
         if not relevant:
             logger.warning(f"No relevance labels for query '{qid}' — skipping")
             continue
-
         for name, fn in retrievers.items():
-            try:
-                retrieved = fn(qtext, args.k)
-                metrics = evaluate_run(retrieved, relevant, k=args.k)
-                results_agg[name].append(metrics)
-            except Exception as e:
-                logger.error(f"{name} failed for query '{qid}': {e}")
+            retrieved = fn(qtext, args.k)
+            metrics = evaluate_run(retrieved, relevant, k=args.k)
+            results_agg[name].append(metrics)
 
     print(f"\n{'='*60}")
     print(f"Evaluation Results  |  k={args.k}  |  collection={args.collection}")
     print(f"{'='*60}")
-
     for name, runs in results_agg.items():
         if not runs:
             continue
-
         avg = {
-            metric: round(sum(r.get(metric, 0) for r in runs) / len(runs), 4)
+            metric: round(sum(r[metric] for r in runs) / len(runs), 4)
             for metric in runs[0]
         }
-
         print(f"\n{name}")
         for metric, val in avg.items():
             print(f"  {metric:<20} {val}")
-
     print(f"\n{'='*60}\n")
 
 
