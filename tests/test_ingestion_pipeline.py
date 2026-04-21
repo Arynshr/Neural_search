@@ -1,14 +1,18 @@
 """
 Integration tests for the full ingestion pipeline.
 Tests parse → chunk → index flow end-to-end with real file I/O.
-No mocking of core components — only external services (Qdrant, BM25).
+Retrievers are mocked — no real BM25/Qdrant needed.
 """
+import json
+import shutil
 import pytest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, create_autospec
 from neural_search.ingestion.pipeline import run_ingestion
 from neural_search.ingestion.parser import parse_document
 from neural_search.ingestion.chunker import chunk_pages
+from neural_search.retrieval.sparse import BM25sRetriever
+from neural_search.retrieval.dense import QdrantRetriever
 
 
 class TestParseThenChunk:
@@ -27,76 +31,85 @@ class TestParseThenChunk:
         pages = parse_document(sample_pdf)
         chunks = chunk_pages(pages)
         for c in chunks:
-            assert c.chunk_id and len(c.chunk_id) == 16
+            assert len(c.chunk_id) == 16
             assert c.source_file == sample_pdf.name
             assert c.token_count > 0
             assert len(c.text.strip()) > 0
 
     def test_chunk_ids_unique_across_documents(self, sample_pdf, sample_docx):
-        pages_pdf  = parse_document(sample_pdf)
-        pages_docx = parse_document(sample_docx)
-        chunks_pdf  = chunk_pages(pages_pdf)
-        chunks_docx = chunk_pages(pages_docx)
-        all_ids = [c.chunk_id for c in chunks_pdf + chunks_docx]
-        assert len(all_ids) == len(set(all_ids))
+        all_chunks = (
+            chunk_pages(parse_document(sample_pdf)) +
+            chunk_pages(parse_document(sample_docx))
+        )
+        ids = [c.chunk_id for c in all_chunks]
+        assert len(ids) == len(set(ids))
 
 
 class TestRunIngestion:
     def test_ingestion_calls_sparse_index(self, sample_pdf):
-        sparse = MagicMock()
+        sparse = create_autospec(BM25sRetriever, instance=True)
         chunks = run_ingestion(source=sample_pdf, sparse_retriever=sparse)
         assert len(chunks) > 0
         sparse.index.assert_called_once()
-        indexed_chunks = sparse.index.call_args[0][0]
-        assert len(indexed_chunks) == len(chunks)
+        assert sparse.index.call_args[0][0] == chunks
 
     def test_ingestion_calls_dense_upsert(self, sample_pdf):
-        dense = MagicMock()
+        dense = create_autospec(QdrantRetriever, instance=True)
         chunks = run_ingestion(source=sample_pdf, dense_retriever=dense)
+        assert len(chunks) > 0
         dense.upsert.assert_called_once()
 
     def test_ingestion_with_both_retrievers(self, sample_pdf):
-        sparse = MagicMock()
-        dense = MagicMock()
+        sparse = create_autospec(BM25sRetriever, instance=True)
+        dense  = create_autospec(QdrantRetriever, instance=True)
         chunks = run_ingestion(source=sample_pdf, sparse_retriever=sparse, dense_retriever=dense)
         assert len(chunks) > 0
         sparse.index.assert_called_once()
         dense.upsert.assert_called_once()
 
     def test_reset_wipes_before_indexing(self, sample_pdf):
-        sparse = MagicMock()
-        dense = MagicMock()
+        sparse = create_autospec(BM25sRetriever, instance=True)
+        dense  = create_autospec(QdrantRetriever, instance=True)
         run_ingestion(source=sample_pdf, sparse_retriever=sparse, dense_retriever=dense, reset=True)
         sparse.reset.assert_called_once()
         dense.reset.assert_called_once()
 
     def test_nonexistent_path_returns_empty(self, tmp_path):
-        ghost = tmp_path / "ghost.pdf"
-        chunks = run_ingestion(source=ghost)
+        chunks = run_ingestion(source=tmp_path / "ghost.pdf")
         assert chunks == []
 
-    def test_exports_jsonl_snapshot(self, sample_pdf, tmp_path, monkeypatch):
-        from neural_search import config
-        mock = MagicMock()
-        mock.chunk_size = 256
-        mock.chunk_overlap = 32
-        mock.bm25_index_path = tmp_path / "bm25"
-        mock.bm25_path_for = lambda s: tmp_path / "bm25" / s
-        mock.documents_path_for = lambda s: tmp_path / "docs" / s
-        monkeypatch.setattr(config, "settings", mock)
+    def test_exports_jsonl_snapshot(self, sample_pdf, tmp_path, patch_settings):
+        # patch_settings is the autouse fixture from conftest — data_dir is already tmp_path/data
+        patch_settings.data_dir = tmp_path / "data"
+        snapshot_path = tmp_path / "data" / "snapshots" / "chunks.jsonl"
 
-        snapshot_path = tmp_path / "bm25" / "snapshots" / "chunks.jsonl"
-        run_ingestion(source=sample_pdf, export_snapshot=True)
-        assert snapshot_path.exists()
+        chunks = run_ingestion(source=sample_pdf, export_snapshot=True)
+
+        assert snapshot_path.exists(), f"Snapshot not found at {snapshot_path}"
         lines = snapshot_path.read_text().strip().splitlines()
-        assert len(lines) > 0
+        assert len(lines) == len(chunks)
 
-    def test_directory_ingestion(self, tmp_path, sample_pdf, sample_docx):
-        import shutil
-        shutil.copy(sample_pdf, tmp_path / "doc1.pdf")
+        # Verify each line is valid JSON with required fields
+        for line in lines:
+            record = json.loads(line)
+            for field in ("chunk_id", "source_file", "page", "text", "token_count"):
+                assert field in record, f"Missing field '{field}' in snapshot record"
+
+    def test_snapshot_disabled_creates_no_file(self, sample_pdf, tmp_path, patch_settings):
+        patch_settings.data_dir = tmp_path / "data"
+        snapshot_path = tmp_path / "data" / "snapshots" / "chunks.jsonl"
+        run_ingestion(source=sample_pdf, export_snapshot=False)
+        assert not snapshot_path.exists()
+
+    def test_directory_ingestion_indexes_all_files(self, tmp_path, sample_pdf, sample_docx):
+        shutil.copy(sample_pdf,  tmp_path / "doc1.pdf")
         shutil.copy(sample_docx, tmp_path / "doc2.docx")
-        sparse = MagicMock()
+        sparse = create_autospec(BM25sRetriever, instance=True)
         chunks = run_ingestion(source=tmp_path, sparse_retriever=sparse)
         assert len(chunks) > 0
-        # Should index once with all chunks combined
         sparse.index.assert_called_once()
+        # All chunks from both docs passed in one index call
+        indexed = sparse.index.call_args[0][0]
+        source_files = {c.source_file for c in indexed}
+        assert "doc1.pdf" in source_files
+        assert "doc2.docx" in source_files
