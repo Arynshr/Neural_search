@@ -1,9 +1,5 @@
 """
 CollectionManager — handles lifecycle of named document collections.
-Each collection has:
-  - an isolated BM25 index at data/bm25_index/<slug>/
-  - an isolated Qdrant collection named <slug>
-  - a metadata.json at data/collections/<slug>/metadata.json
 """
 import json
 import re
@@ -32,14 +28,20 @@ class CollectionManager:
         path = self._meta_path(slug)
         if not path.exists():
             return {}
-        with open(path) as f:
-            return json.load(f)
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            logger.error(f"Corrupt metadata for collection '{slug}' — skipping")
+            return {}
 
     def _write_meta(self, slug: str, meta: dict) -> None:
         path = self._meta_path(slug)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w") as f:
+        tmp = path.with_suffix(".tmp")
+        with open(tmp, "w") as f:
             json.dump(meta, f, indent=2)
+        tmp.replace(path)
 
     def list_collections(self) -> list[dict]:
         collections = []
@@ -57,19 +59,27 @@ class CollectionManager:
     def create_collection(self, name: str, description: str = "") -> dict:
         if len(self.list_collections()) >= MAX_COLLECTIONS:
             raise ValueError(f"Collection limit reached ({MAX_COLLECTIONS}). Delete one first.")
+
         slug = slugify(name)
+        if not slug:
+            raise ValueError("Invalid collection name.")
+
         if self.get_collection(slug):
             raise ValueError(f"Collection '{name}' already exists.")
+
+        now = datetime.now(timezone.utc)
+
         meta = {
             "slug": slug,
             "name": name,
             "description": description,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": now,
+            "updated_at": now,
             "files": [],
             "total_chunks": 0,
             "total_tokens": 0,
         }
+
         self._write_meta(slug, meta)
         logger.info(f"Collection created: '{name}' (slug={slug})")
         return meta
@@ -77,6 +87,7 @@ class CollectionManager:
     def delete_collection(self, slug: str) -> None:
         if not self.get_collection(slug):
             raise ValueError(f"Collection '{slug}' not found.")
+
         for path in [
             settings.data_dir / "bm25_index" / slug,
             settings.data_dir / "documents" / slug,
@@ -84,18 +95,24 @@ class CollectionManager:
         ]:
             if path.exists():
                 shutil.rmtree(path)
+
         logger.info(f"Collection deleted: '{slug}'")
 
     def add_file_record(self, slug: str, record: dict) -> None:
         meta = self._read_meta(slug)
-        existing = [f for f in meta["files"] if f["filename"] != record["filename"]]
+        if not meta:
+            raise ValueError(f"Collection '{slug}' not found.")
+
+        existing = [f for f in meta.get("files", []) if f["filename"] != record["filename"]]
         existing.append(record)
+
         meta["files"] = existing
-        meta["total_chunks"] = sum(f["chunks"] for f in existing)
-        meta["total_tokens"] = sum(f["tokens"] for f in existing)
-        meta["updated_at"] = datetime.now(timezone.utc).isoformat()
+        meta["total_chunks"] = sum(f.get("chunks", 0) for f in existing)
+        meta["total_tokens"] = sum(f.get("tokens", 0) for f in existing)
+        meta["updated_at"] = datetime.now(timezone.utc)
+
         self._write_meta(slug, meta)
 
     def file_exists(self, slug: str, filename: str) -> bool:
         meta = self._read_meta(slug)
-        return any(f["filename"] == filename for f in meta.get("files", []))
+        return any(f.get("filename") == filename for f in meta.get("files", []))

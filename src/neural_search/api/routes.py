@@ -27,7 +27,13 @@ def _get_hybrid(slug: str) -> HybridRetriever:
     return HybridRetriever(sparse=sparse, dense=dense)
 
 
-# ── Health ────────────────────────────────────────────────────────────────────
+def _require_collection(slug: str) -> dict:
+    col = collection_manager.get_collection(slug)
+    if not col:
+        raise HTTPException(status_code=404, detail=f"Collection '{slug}' not found")
+    return col
+
+
 @router.get("/health", response_model=HealthResponse)
 def health():
     cols = collection_manager.list_collections()
@@ -38,7 +44,6 @@ def health():
     )
 
 
-# ── Collections ───────────────────────────────────────────────────────────────
 @router.get("/collections", response_model=list[CollectionMeta])
 def list_collections():
     return collection_manager.list_collections()
@@ -54,16 +59,13 @@ def create_collection(body: CreateCollectionRequest):
 
 @router.get("/collections/{slug}", response_model=CollectionMeta)
 def get_collection(slug: str):
-    col = collection_manager.get_collection(slug)
-    if not col:
-        raise HTTPException(status_code=404, detail="Collection not found")
-    return col
+    return _require_collection(slug)
 
 
 @router.delete("/collections/{slug}", status_code=204)
 def delete_collection(slug: str):
+    _require_collection(slug)
     try:
-        # Also wipe Qdrant collection
         dense = QdrantRetriever(collection_slug=slug)
         dense.reset()
         collection_manager.delete_collection(slug)
@@ -71,89 +73,99 @@ def delete_collection(slug: str):
         raise HTTPException(status_code=404, detail=str(e))
 
 
-# ── Ingest ────────────────────────────────────────────────────────────────────
 @router.post("/collections/{slug}/ingest", response_model=IngestResponse)
 async def ingest(slug: str, file: UploadFile = File(...), force: bool = False):
-    col = collection_manager.get_collection(slug)
-    if not col:
-        raise HTTPException(status_code=404, detail="Collection not found")
+    _require_collection(slug)
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Invalid file")
 
     filename = file.filename
     warnings = []
 
-    # Duplicate detection
     if collection_manager.file_exists(slug, filename) and not force:
         raise HTTPException(
             status_code=409,
-            detail=f"'{filename}' already exists in this collection. Use force=true to re-ingest.",
+            detail=f"'{filename}' already exists. Use force=true to re-ingest.",
         )
 
-    # Save file
     dest_dir = settings.documents_path_for(slug)
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / filename
-    dest.write_bytes(await file.read())
 
-    # Ingest
+    with dest.open("wb") as f:
+        while chunk := await file.read(1024 * 1024):
+            f.write(chunk)
+
     sparse = BM25sRetriever(collection_slug=slug)
     sparse.load()
     dense = QdrantRetriever(collection_slug=slug)
-    chunks = run_ingestion(source=dest, sparse_retriever=sparse, dense_retriever=dense)
+
+    chunks = run_ingestion(
+        source=dest,
+        sparse_retriever=sparse,
+        dense_retriever=dense,
+        collection_slug=slug,
+    )
 
     if not chunks:
         warnings.append("No chunks extracted — check document content")
 
     total_tokens = sum(c.token_count for c in chunks)
-    pages = max((c.page for c in chunks), default=0)
+    page_count = len({c.page for c in chunks})
 
-    # Update metadata
     collection_manager.add_file_record(slug, {
         "filename": filename,
-        "pages": pages,
+        "pages": page_count,
         "chunks": len(chunks),
         "tokens": total_tokens,
-        "ingested_at": datetime.now(timezone.utc).isoformat(),
+        "ingested_at": datetime.now(timezone.utc),
         "status": "ok" if chunks else "empty",
     })
 
     logger.info(f"[{slug}] Ingested '{filename}' — {len(chunks)} chunks, {total_tokens} tokens")
+
     return IngestResponse(
         status="ok",
         collection=slug,
         filename=filename,
         chunks_indexed=len(chunks),
         tokens=total_tokens,
-        pages=pages,
+        pages=page_count,
         warnings=warnings,
     )
 
 
-# ── Search ────────────────────────────────────────────────────────────────────
 @router.post("/search", response_model=SearchResponse)
 async def search(body: SearchRequest, request: Request):
-    col = collection_manager.get_collection(body.collection)
-    if not col:
-        raise HTTPException(status_code=404, detail="Collection not found")
+    _require_collection(body.collection)
+
+    if not body.query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
 
     t0 = time.perf_counter()
     hybrid = _get_hybrid(body.collection)
-    sparse = hybrid._sparse
-    dense = hybrid._dense
 
     if body.mode == "sparse":
-        results = sparse.search(body.query, k=body.k)
+        results = BM25sRetriever(body.collection).search(body.query, k=body.k)
     elif body.mode == "dense":
-        results = dense.search(body.query, k=body.k)
+        results = QdrantRetriever(body.collection).search(body.query, k=body.k)
     else:
         results = hybrid.search(body.query, k=body.k)
 
     synthesis = None
+    synthesizer = getattr(request.app.state, "synthesizer", None)
+
     if body.synthesize:
-        synthesizer: GroqSynthesizer = request.app.state.synthesizer
+        if not synthesizer:
+            raise HTTPException(status_code=500, detail="Synthesizer not configured")
         synthesis = synthesizer.synthesize(body.query, results)
 
     latency_ms = round((time.perf_counter() - t0) * 1000, 2)
-    logger.info(f"Search | collection={body.collection} | mode={body.mode} | latency={latency_ms}ms")
+
+    logger.info(
+        f"Search | collection={body.collection} | mode={body.mode} | latency={latency_ms}ms"
+    )
 
     return SearchResponse(
         query=body.query,
@@ -167,10 +179,15 @@ async def search(body: SearchRequest, request: Request):
 
 @router.get("/search/debug", response_model=DebugResponse)
 def search_debug(query: str, collection: str, k: int = 10):
-    col = collection_manager.get_collection(collection)
-    if not col:
-        raise HTTPException(status_code=404, detail="Collection not found")
+    _require_collection(collection)
+
+    if not query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    if k < 1 or k > 50:
+        raise HTTPException(status_code=400, detail="k must be between 1 and 50")
+
     hybrid = _get_hybrid(collection)
     debug = hybrid.search_debug(query, k=k)
     debug["collection"] = collection
+
     return DebugResponse(**debug)
