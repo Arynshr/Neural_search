@@ -28,6 +28,9 @@ ENV/
 data/raw/
 data/processed/
 data/indices/
+data/documents/
+data/qdrant/
+data/snapshots/
 .pdf
 .json
 
