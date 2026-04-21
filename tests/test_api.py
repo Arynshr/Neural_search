@@ -69,7 +69,7 @@ def mock_synthesizer():
     synth.synthesize.return_value = {
         "answer": "Payment terms are net 30 days.",
         "sources_used": [{"source_file": "contract.pdf", "page": 3}],
-        "model": "llama3-8b-8192",
+        "model": "llama-3.1-8b-instant",
     }
     return synth
 
@@ -78,10 +78,11 @@ def mock_synthesizer():
 def client(mock_collection_manager, mock_hybrid, mock_synthesizer):
     with patch("neural_search.api.routes.collection_manager", mock_collection_manager), \
          patch("neural_search.api.routes._get_hybrid", return_value=mock_hybrid), \
-         patch("neural_search.synthesis.groq_client.Groq"):
+         patch("neural_search.synthesis.groq_client.Groq"), \
+         patch("neural_search.api.main.GroqSynthesizer", return_value=mock_synthesizer):
         from neural_search.api.main import app
-        app.state.synthesizer = mock_synthesizer
         with TestClient(app, raise_server_exceptions=True) as c:
+            # lifespan sets app.state.synthesizer via GroqSynthesizer() — patched above
             yield c
 
 
