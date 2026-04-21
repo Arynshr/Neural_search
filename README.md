@@ -1,235 +1,146 @@
-# Neural-IR
+# Neural Search
 
-**Objective:** Build a hybrid sparse + dense retrieval system with measurable improvements over baseline retrieval, incorporating evaluation, reranking, and adaptive retrieval strategies.
-
----
-
-# Core Philosophy Update
-
-This project now follows two parallel tracks:
-
-- **Track A — System Engineering** (ingestion, indexing, API, UI)
-- **Track B — Retrieval Intelligence** (evaluation, optimization, learning)
-
-The goal is not just to build a working system, but to **prove improvements quantitatively**.
+A hybrid sparse + dense retrieval system for PDF and DOCX documents, with multi-collection support, a FastAPI backend, Streamlit UI, and LLM-based answer synthesis via Groq.
 
 ---
 
-# Final Stack (Updated)
+## Stack
 
-| Layer | Tool |
-|------|------|
+| Layer | Technology |
+|---|---|
 | Document parsing | `pymupdf`, `python-docx` |
-| Chunking | `langchain-text-splitters` |
-| Sparse retrieval | `BM25s` |
-| Embedding model | `all-MiniLM-L6-v2` |
-| Dense retrieval | `Qdrant` (local mode) |
-| Fusion | RRF + Learned Hybrid (LogReg) |
-| Reranking | Cross-Encoder (`ms-marco-MiniLM`) |
-| Inference / synthesis | `Groq API` (`llama3-8b-8192`) |
-| API | `FastAPI` |
+| Chunking | `langchain-text-splitters` (512 tokens, 64 overlap) |
+| Sparse retrieval | `BM25s` + NLTK |
+| Dense retrieval | `sentence-transformers` (`all-MiniLM-L6-v2`) + `Qdrant` (local) |
+| Hybrid fusion | Reciprocal Rank Fusion (RRF, k=60) |
+| Answer synthesis | `Groq` (`llama-3.1-8b-instant`) |
+| API | `FastAPI` + `Uvicorn` |
 | UI | `Streamlit` |
 | Config | `pydantic-settings` + `.env` |
 | Logging | `loguru` |
 
 ---
 
-# Project Structure (Additions Only)
+## Project Structure
 
 ```
-neural_search/
-  evaluation/
-    queries.json          # query set
-    relevance.json        # labeled relevance
-  scripts/
-    run_eval.py           # evaluation runner
-  src/
-    neural_search/
-      retrieval/
-        reranker.py       # cross-encoder reranker
-        learned.py        # learned hybrid model
-      evaluation/
-        metrics.py        # P@K, MRR, nDCG
-        dataset.py        # load eval data
+Neural_search/
+├── src/neural_search/
+│   ├── api/            # FastAPI routes, schemas, app entrypoint
+│   ├── ingestion/      # Document parsing and chunking pipeline
+│   ├── retrieval/
+│   │   ├── sparse.py   # BM25s retriever
+│   │   ├── dense.py    # Qdrant dense retriever
+│   │   └── hybrid.py   # RRF fusion + debug output
+│   ├── collections/    # Multi-collection manager (CRUD + metadata)
+│   ├── synthesis/      # Groq LLM answer synthesis
+│   ├── evaluation/     # Metrics (P@K, Recall@K, MRR, nDCG) + dataset loader
+│   └── config.py       # Pydantic settings (all paths & model params)
+├── scripts/
+│   ├── ingest_documents.py   # CLI: bulk ingest documents
+│   ├── run_eval.py           # Evaluation runner (BM25 vs dense vs hybrid)
+│   ├── build_lexical_index.py
+│   └── BM25_benchmark.py
+├── evaluation/
+│   ├── queries.json          # Evaluation query set
+│   └── relevance.json        # Ground-truth relevance labels
+├── tests/                    # Unit + integration tests (pytest)
+└── data/                     # Runtime data (qdrant, bm25_index, documents, snapshots)
 ```
 
 ---
 
-# Phase 1 — Data Foundation (Week 1–2)
+## Quickstart
 
-**Unchanged core, with additions for evaluation readiness**
+**Requirements:** Python 3.11+, [`uv`](https://github.com/astral-sh/uv)
 
-### Additions
-- Store both **raw text + cleaned text**
-- Store **token count per chunk**
-- Export dataset snapshot (JSONL)
+```bash
+# Install dependencies
+uv sync
 
-### Exit Criteria
-- Same as before + dataset ready for evaluation
+# Configure environment
+cp .env.example .env   # set GROQ_API_KEY
 
----
+# Start the API
+uvicorn neural_search.api.main:app --reload
 
-# Phase 2 — Baseline Retrieval (Week 3)
-
-**Focus: Build clean, debuggable baselines before optimization**
-
-### Additions
-- `/search/debug` endpoint returning:
-  - BM25 ranks
-  - Dense ranks
-  - RRF output
-
-### Exit Criteria
-- Clear visibility into retrieval behavior
+# Start the UI (separate terminal)
+streamlit run src/ui/app.py
+```
 
 ---
 
-# Phase 3 — Evaluation Framework (Week 4) ⚠️
+## API Endpoints
 
-**New critical phase**
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/health` | System status + collection count |
+| `GET` | `/collections` | List all collections |
+| `POST` | `/collections` | Create a named collection |
+| `DELETE` | `/collections/{slug}` | Delete collection + its indexes |
+| `POST` | `/collections/{slug}/ingest` | Upload and index a PDF/DOCX file |
+| `POST` | `/search` | Search with mode: `sparse`, `dense`, or `hybrid` |
+| `GET` | `/search/debug` | Side-by-side BM25 / dense / RRF rank breakdown |
 
-### 3.1 Labeled Dataset
-- 30–50 queries
-- Each query mapped to relevant chunk_ids
-
-### 3.2 Metrics
-Implement:
-- Precision@K
-- Recall@K
-- MRR
-- nDCG
-
-### 3.3 Benchmark Script
-
-`scripts/run_eval.py`
-
-Outputs comparative metrics:
-- BM25
-- Dense
-- Hybrid (RRF)
-
-### Exit Criteria
-- Quantitative comparison of retrieval methods
+**Search request example:**
+```json
+{
+  "query": "what is attention mechanism",
+  "collection": "ml-papers",
+  "mode": "hybrid",
+  "k": 5,
+  "synthesize": true
+}
+```
 
 ---
 
-# Phase 4 — Retrieval Optimization (Week 5–6)
+## Configuration (`.env`)
 
-## 4.1 Learned Hybrid Fusion
-
-Replace static RRF with model-based scoring.
-
-### Features
-- BM25 score
-- Dense score
-- Rank positions
-- Query length
-- Chunk length
-
-### Model
-- Logistic Regression
-
-### Goal
-- Predict probability of relevance
+```env
+GROQ_API_KEY=your_key_here
+GROQ_MODEL=llama-3.1-8b-instant
+EMBEDDING_MODEL=all-MiniLM-L6-v2
+CHUNK_SIZE=512
+CHUNK_OVERLAP=64
+TOP_K=10
+RRF_K=60
+DATA_DIR=./data
+QDRANT_PATH=./data/qdrant
+BM25_INDEX_PATH=./data/bm25_index
+```
 
 ---
 
-## 4.2 Reranking Layer
+## Evaluation
 
-Pipeline:
+Run quantitative retrieval comparison across BM25, dense, and hybrid modes:
 
-retrieve top-20 → rerank → top-5
+```bash
+python scripts/run_eval.py
+```
 
-### Implementation
-- Cross-encoder model
-- Compare performance vs baseline
+Outputs **Precision@K, Recall@K, MRR, and nDCG** for each retrieval mode against labeled ground-truth in `evaluation/relevance.json`.
 
----
-
-## 4.3 Context Optimization
-
-- Remove redundant chunks (MMR)
-- Merge adjacent chunks
-
----
-
-# Phase 5 — Adaptive Retrieval (Week 7)
-
-### Query Classification
-
-Classify queries into:
-- keyword-heavy
-- semantic
-- vague
-
-### Dynamic Strategy
-
-Adjust hybrid weights dynamically.
-
----
-
-# Phase 6 — API & Synthesis (Integrated)
-
-### Enhancements
-- Support retrieval mode selection:
-  - BM25
-  - Dense
-  - Hybrid
-  - Learned
-- Include reranked outputs
-
----
-
-# Phase 7 — Streamlit UI & Observability (Week 8)
-
-### UI Additions
-- Toggle retrieval modes
-- Show score breakdown
-- Show reranking impact
-
-### Observability
-- Log retrieval + reranking latency separately
-- Display last queries with metrics
-
----
-
-# Evaluation Goals (Updated)
+**Targets:**
 
 | Metric | Target |
-|------|--------|
-| Precision@3 | >80% |
-| Latency | <5s |
-| Hybrid vs BM25 improvement | measurable |
+|---|---|
+| Precision@3 | > 80% |
+| Hybrid vs BM25 | measurable improvement |
+| Search latency | < 5s |
 
 ---
 
-# Updated Timeline
+## Testing
 
-| Phase | Deliverable | Duration |
-|------|------------|----------|
-| 1 | Data foundation | 2 weeks |
-| 2 | Baseline retrieval | 1 week |
-| 3 | Evaluation framework | 1 week |
-| 4 | Retrieval optimization | 2 weeks |
-| 5 | Adaptive retrieval | 1 week |
-| 6 | API + synthesis | parallel |
-| 7 | UI + hardening | 1 week |
+```bash
+# Run all tests
+pytest tests/
 
-**Total: 8 weeks**
+# Unit tests only
+pytest tests/ --ignore=tests/integration
 
----
-
-# Final Outcome
-
-System evolves from:
-
-- Basic RAG pipeline
-
-To:
-
-- Evaluated retrieval system
-- Learned ranking model
-- Adaptive hybrid search
-- Reranked and optimized context
-
----
+# Integration tests
+pytest tests/integration/
+```
