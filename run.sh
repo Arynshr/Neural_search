@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
 # =============================================================================
 # Neural Search — Master Control Script
-# Usage:
-#   ./run.sh setup        — create venv, install deps, download NLTK data
-#   ./run.sh ingest       — ingest documents from data/documents/
-#   ./run.sh ingest --reset  — wipe indexes and reingest
-#   ./run.sh api          — start FastAPI server
-#   ./run.sh ui           — start Streamlit dashboard
-#   ./run.sh start        — start API + UI together (background + foreground)
-#   ./run.sh eval         — run retrieval evaluation
-#   ./run.sh verify       — verify BM25 and Qdrant index sync
-#   ./run.sh stop         — stop background API process
-#   ./run.sh clean        — wipe all indexes and snapshots
+#
+# Commands:
+#   ./run.sh setup              Create venv, install deps, download NLTK data
+#   ./run.sh ingest             Ingest documents from data/documents/
+#   ./run.sh ingest --reset     Wipe indexes and reingest
+#   ./run.sh api                Start FastAPI server (foreground)
+#   ./run.sh ui                 Start Streamlit dashboard (foreground)
+#   ./run.sh start              Start API (background) + Streamlit (foreground)
+#   ./run.sh stop               Stop background API process
+#   ./run.sh eval               Run retrieval evaluation (P@K, MRR, nDCG)
+#   ./run.sh eval --k 5         Evaluate at k=5
+#   ./run.sh verify             Check BM25 and Qdrant index sync
+#   ./run.sh test               Run all tests
+#   ./run.sh test unit          Run unit tests only
+#   ./run.sh test integration   Run integration tests only
+#   ./run.sh test coverage      Run all tests with coverage report
+#   ./run.sh clean              Wipe all indexes and snapshots
+#   ./run.sh logs               Tail live API logs
 # =============================================================================
 
 set -euo pipefail
@@ -51,15 +58,28 @@ activate_venv() {
     fi
     # shellcheck source=/dev/null
     source "$VENV_DIR/bin/activate"
-    export PYTHONPATH="$SRC_DIR:$PYTHONPATH"
+    export PYTHONPATH="$SRC_DIR${PYTHONPATH:+:$PYTHONPATH}"
 }
 
 ensure_dirs() {
-    mkdir -p "$PROJECT_ROOT/logs" \
-             "$PROJECT_ROOT/data/documents" \
-             "$PROJECT_ROOT/data/qdrant" \
-             "$PROJECT_ROOT/data/bm25_index" \
-             "$PROJECT_ROOT/data/snapshots"
+    mkdir -p \
+        "$PROJECT_ROOT/logs" \
+        "$PROJECT_ROOT/data/documents" \
+        "$PROJECT_ROOT/data/qdrant" \
+        "$PROJECT_ROOT/data/bm25_index" \
+        "$PROJECT_ROOT/data/collections" \
+        "$PROJECT_ROOT/data/snapshots"
+}
+
+# Locate the ui directory — supports ui/ at project root or src/ui/
+find_ui_dir() {
+    if [[ -f "$PROJECT_ROOT/ui/app.py" ]]; then
+        echo "$PROJECT_ROOT/ui"
+    elif [[ -f "$PROJECT_ROOT/src/ui/app.py" ]]; then
+        echo "$PROJECT_ROOT/src/ui"
+    else
+        error "Cannot find ui/app.py — expected at $PROJECT_ROOT/ui/ or $PROJECT_ROOT/src/ui/"
+    fi
 }
 
 # ── Commands ──────────────────────────────────────────────────────────────────
@@ -68,7 +88,6 @@ cmd_setup() {
     ensure_dirs
     check_env
 
-    # Create venv if missing
     if [[ ! -d "$VENV_DIR" ]]; then
         log "Creating virtual environment..."
         python3 -m venv "$VENV_DIR"
@@ -76,7 +95,6 @@ cmd_setup() {
 
     source "$VENV_DIR/bin/activate"
 
-    # Install deps
     log "Installing dependencies..."
     if command -v uv &>/dev/null; then
         uv pip install -e "$PROJECT_ROOT[dev]"
@@ -85,11 +103,18 @@ cmd_setup() {
         pip install -e "$PROJECT_ROOT[dev]" -q
     fi
 
-    # NLTK data
-    log "Downloading NLTK stopwords..."
-    python3 -c "import nltk; nltk.download('stopwords', quiet=True); nltk.download('punkt', quiet=True)"
+    log "Installing test dependencies..."
+    pip install pytest-cov -q
 
-    success "Setup complete — activate with: source .venv/bin/activate"
+    log "Downloading NLTK data..."
+    python3 -c "
+import nltk
+nltk.download('stopwords', quiet=True)
+nltk.download('punkt', quiet=True)
+nltk.download('punkt_tab', quiet=True)
+"
+
+    success "Setup complete"
     echo -e "\n${BOLD}Next steps:${RESET}"
     echo "  1. Add your GROQ_API_KEY to .env"
     echo "  2. Drop PDF/DOCX files into data/documents/"
@@ -110,7 +135,8 @@ cmd_api() {
     activate_venv
     check_env
     log "Starting FastAPI server at http://$API_HOST:$API_PORT"
-    log "Swagger docs: http://$API_HOST:$API_PORT/docs"
+    log "Swagger docs:  http://$API_HOST:$API_PORT/docs"
+    log "Health check:  http://$API_HOST:$API_PORT/health"
     uvicorn neural_search.api.main:app \
         --host "$API_HOST" \
         --port "$API_PORT" \
@@ -120,9 +146,12 @@ cmd_api() {
 
 cmd_ui() {
     activate_venv
-    log "Starting Streamlit dashboard..."
-    cd "$PROJECT_ROOT/ui"
-    streamlit run app.py \
+    local ui_dir
+    ui_dir="$(find_ui_dir)"
+    log "Starting Streamlit dashboard at http://localhost:8501"
+    log "UI directory: $ui_dir"
+    cd "$ui_dir"
+    PYTHONPATH="$SRC_DIR${PYTHONPATH:+:$PYTHONPATH}" streamlit run app.py \
         --server.port 8501 \
         --server.address localhost \
         --browser.gatherUsageStats false
@@ -133,7 +162,7 @@ cmd_start() {
     check_env
     ensure_dirs
 
-    # Check if API already running
+    # Start API in background if not already running
     if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
         warn "API already running (PID $(cat "$PID_FILE")) — skipping"
     else
@@ -146,40 +175,30 @@ cmd_start() {
         echo $! > "$PID_FILE"
         success "API started (PID $(cat "$PID_FILE")) — logs: logs/api.log"
 
-        # Wait for API to be ready
+        # Wait up to 15s for API to be ready
         log "Waiting for API to be ready..."
         for i in {1..15}; do
             if curl -sf "http://$API_HOST:$API_PORT/health" &>/dev/null; then
                 success "API is up at http://$API_HOST:$API_PORT"
                 break
             fi
+            if [[ $i -eq 15 ]]; then
+                warn "API did not respond in time — check logs/api.log"
+            fi
             sleep 1
         done
     fi
 
-    # Start Streamlit in foreground
-    log "Starting Streamlit dashboard (Ctrl+C to stop)..."
-    cd "$PROJECT_ROOT/ui"
-    PYTHONPATH="$SRC_DIR" streamlit run app.py \
+    # Start Streamlit in foreground — Ctrl+C triggers cleanup via trap
+    local ui_dir
+    ui_dir="$(find_ui_dir)"
+    log "Starting Streamlit dashboard (Ctrl+C to stop both)..."
+    trap cmd_stop EXIT
+    cd "$ui_dir"
+    PYTHONPATH="$SRC_DIR${PYTHONPATH:+:$PYTHONPATH}" streamlit run app.py \
         --server.port 8501 \
         --server.address localhost \
         --browser.gatherUsageStats false
-
-    # On exit, stop API
-    cmd_stop
-}
-
-cmd_eval() {
-    activate_venv
-    check_env
-    log "Running retrieval evaluation..."
-    python3 "$PROJECT_ROOT/scripts/run_eval.py" "$@"
-}
-
-cmd_verify() {
-    activate_venv
-    log "Verifying index sync..."
-    python3 "$PROJECT_ROOT/scripts/verify_index.py"
 }
 
 cmd_stop() {
@@ -197,47 +216,129 @@ cmd_stop() {
     fi
 }
 
+cmd_eval() {
+    activate_venv
+    check_env
+    log "Running retrieval evaluation..."
+    python3 "$PROJECT_ROOT/scripts/run_eval.py" "$@"
+}
+
+cmd_verify() {
+    activate_venv
+    log "Verifying index sync..."
+    python3 "$PROJECT_ROOT/scripts/verify_index.py"
+}
+
+cmd_test() {
+    activate_venv
+    local scope="${1:-all}"
+    shift 2>/dev/null || true
+
+    case "$scope" in
+        unit)
+            log "Running unit tests..."
+            PYTHONPATH="$SRC_DIR" pytest tests/unit/ -v --tb=short "$@"
+            ;;
+        integration)
+            log "Running integration tests..."
+            PYTHONPATH="$SRC_DIR" pytest tests/integration/ -v --tb=short "$@"
+            ;;
+        coverage)
+            log "Running all tests with coverage report..."
+            PYTHONPATH="$SRC_DIR" pytest tests/ \
+                -v --tb=short \
+                --cov=neural_search \
+                --cov-report=term-missing \
+                --cov-report=html:logs/coverage \
+                "$@"
+            success "HTML coverage report: logs/coverage/index.html"
+            ;;
+        all)
+            log "Running all tests..."
+            PYTHONPATH="$SRC_DIR" pytest tests/ -v --tb=short "$@"
+            ;;
+        *)
+            log "Running: pytest $scope $*"
+            PYTHONPATH="$SRC_DIR" pytest "$scope" -v --tb=short "$@"
+            ;;
+    esac
+}
+
+cmd_logs() {
+    if [[ ! -f "$API_LOG" ]]; then
+        warn "No log file at $API_LOG — has the API been started?"
+        exit 1
+    fi
+    log "Tailing API logs (Ctrl+C to stop)..."
+    tail -f "$API_LOG"
+}
+
 cmd_clean() {
-    warn "This will wipe all indexes and snapshots. Continue? [y/N]"
-    read -r confirm
+    echo -e "${YELLOW}This will wipe all indexes, collections, and snapshots.${RESET}"
+    read -rp "Continue? [y/N] " confirm
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
-        rm -rf "$PROJECT_ROOT/data/qdrant/"*
-        rm -rf "$PROJECT_ROOT/data/bm25_index/"*
-        rm -rf "$PROJECT_ROOT/data/snapshots/"*
-        success "All indexes and snapshots cleared"
+        rm -rf \
+            "$PROJECT_ROOT/data/qdrant/"* \
+            "$PROJECT_ROOT/data/bm25_index/"* \
+            "$PROJECT_ROOT/data/collections/"* \
+            "$PROJECT_ROOT/data/snapshots/"*
+        success "All indexes, collections, and snapshots cleared"
     else
         log "Aborted"
     fi
 }
 
+cmd_help() {
+    echo -e "\n${BOLD}Neural Search — run.sh${RESET}"
+    echo -e "${CYAN}Usage: ./run.sh <command> [options]${RESET}\n"
+    echo -e "${BOLD}Setup${RESET}"
+    echo "  setup                   Create venv, install deps, download NLTK data"
+    echo ""
+    echo -e "${BOLD}Data${RESET}"
+    echo "  ingest                  Ingest documents from data/documents/"
+    echo "  ingest --reset          Wipe indexes and reingest from scratch"
+    echo "  verify                  Check BM25 and Qdrant index are in sync"
+    echo "  clean                   Wipe all indexes, collections, and snapshots"
+    echo ""
+    echo -e "${BOLD}Server${RESET}"
+    echo "  api                     Start FastAPI server in foreground"
+    echo "  ui                      Start Streamlit dashboard in foreground"
+    echo "  start                   Start API (background) + UI (foreground)"
+    echo "  stop                    Stop background API process"
+    echo "  logs                    Tail live API logs"
+    echo ""
+    echo -e "${BOLD}Evaluation${RESET}"
+    echo "  eval                    Run retrieval evaluation (P@K, MRR, nDCG)"
+    echo "  eval --k 5              Evaluate at k=5"
+    echo ""
+    echo -e "${BOLD}Testing${RESET}"
+    echo "  test                    Run all tests"
+    echo "  test unit               Run unit tests only (fast, no I/O)"
+    echo "  test integration        Run integration tests only"
+    echo "  test coverage           Run all tests with HTML coverage report"
+    echo "  test <path>             Run a specific test file or directory"
+    echo "  test unit -k metrics    Run tests matching 'metrics' in unit suite"
+    echo ""
+}
+
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 COMMAND="${1:-help}"
-shift || true   # remaining args passed through to subcommands
+shift || true
 
 case "$COMMAND" in
-    setup)   cmd_setup ;;
-    ingest)  cmd_ingest "$@" ;;
-    api)     cmd_api ;;
-    ui)      cmd_ui ;;
-    start)   cmd_start ;;
-    eval)    cmd_eval "$@" ;;
-    verify)  cmd_verify ;;
-    stop)    cmd_stop ;;
-    clean)   cmd_clean ;;
-    help|*)
-        echo -e "\n${BOLD}Neural Search — run.sh${RESET}"
-        echo -e "${CYAN}Usage: ./run.sh <command> [options]${RESET}\n"
-        echo "  setup          Create venv, install deps, download NLTK data"
-        echo "  ingest         Ingest documents from data/documents/"
-        echo "  ingest --reset Wipe indexes and reingest"
-        echo "  api            Start FastAPI server (foreground)"
-        echo "  ui             Start Streamlit dashboard (foreground)"
-        echo "  start          Start API (background) + Streamlit (foreground)"
-        echo "  eval           Run retrieval evaluation (P@K, MRR, nDCG)"
-        echo "  eval --k 5     Evaluate at k=5"
-        echo "  verify         Check BM25 and Qdrant index sync"
-        echo "  stop           Stop background API process"
-        echo "  clean          Wipe all indexes and snapshots"
-        echo ""
+    setup)       cmd_setup ;;
+    ingest)      cmd_ingest "$@" ;;
+    api)         cmd_api ;;
+    ui)          cmd_ui ;;
+    start)       cmd_start ;;
+    stop)        cmd_stop ;;
+    eval)        cmd_eval "$@" ;;
+    verify)      cmd_verify ;;
+    test)        cmd_test "${@:-all}" ;;
+    logs)        cmd_logs ;;
+    clean)       cmd_clean ;;
+    help|--help) cmd_help ;;
+    *)
+        error "Unknown command: '$COMMAND' — run './run.sh help' for usage"
         ;;
 esac
