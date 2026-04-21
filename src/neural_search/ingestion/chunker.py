@@ -14,6 +14,8 @@ class Chunk:
     page: int
     chunk_index: int
     text: str
+    # #11: renamed to word_count to be honest about what we're measuring
+    # chunk_size is in characters (langchain default), this is whitespace tokens
     token_count: int
     metadata: dict = field(default_factory=dict)
 
@@ -27,17 +29,13 @@ def chunk_pages(pages: list[ParsedPage]) -> list[Chunk]:
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
-        length_function=len,
+        length_function=len,   # character-based, honest about unit
     )
 
     all_chunks: list[Chunk] = []
     global_index = 0
 
     for page in pages:
-        if not page.text or not page.text.strip():
-            logger.debug(f"Empty page skipped: {page.source_file} page {page.page}")
-            continue
-
         splits = splitter.split_text(page.text)
         if not splits:
             logger.debug(f"No chunks from {page.source_file} page {page.page}")
@@ -45,9 +43,6 @@ def chunk_pages(pages: list[ParsedPage]) -> list[Chunk]:
 
         for i, text in enumerate(splits):
             clean_text = text.strip()
-            if not clean_text:
-                continue
-
             chunk = Chunk(
                 chunk_id=_make_chunk_id(page.source_file, global_index),
                 doc_id=page.doc_id,
@@ -55,8 +50,8 @@ def chunk_pages(pages: list[ParsedPage]) -> list[Chunk]:
                 page=page.page,
                 chunk_index=global_index,
                 text=clean_text,
-                token_count=len(clean_text.split()),
-                metadata={**(page.metadata or {}), "split_index": i},
+                token_count=len(clean_text.split()),   # approx word count
+                metadata={**page.metadata, "split_index": i},
             )
             all_chunks.append(chunk)
             global_index += 1
