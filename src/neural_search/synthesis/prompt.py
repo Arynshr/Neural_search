@@ -1,8 +1,19 @@
-def build_prompt(query: str, chunks: list[dict]) -> dict:
+from dataclasses import fields as dataclass_fields
+
+
+def _get(chunk, key: str):
+    """Access a chunk field whether it's a dict or a dataclass."""
+    if isinstance(chunk, dict):
+        return chunk[key]
+    return getattr(chunk, key)
+
+
+def build_prompt(query: str, chunks: list) -> dict:
     context_blocks = []
     for i, chunk in enumerate(chunks, start=1):
         context_blocks.append(
-            f"[Source {i}: {chunk['source_file']}, Page {chunk['page']}]\n{chunk['text']}"
+            f"[Source {i}: {_get(chunk, 'source_file')}, "
+            f"Page {_get(chunk, 'page')}]\n{_get(chunk, 'text')}"
         )
     context = "\n\n".join(context_blocks)
 

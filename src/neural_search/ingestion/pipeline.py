@@ -70,9 +70,9 @@ def run_ingestion(
         logger.warning("No chunks produced — check chunking config")
         return []
 
-    # Export JSONL snapshot
+    # Export JSONL snapshot — always under data_dir/snapshots/
     if export_snapshot:
-        snapshot_path = settings.bm25_index_path.parent / "snapshots" / "chunks.jsonl"
+        snapshot_path = settings.data_dir / "snapshots" / "chunks.jsonl"
         _export_jsonl(chunks, snapshot_path)
 
     # Index sparse
