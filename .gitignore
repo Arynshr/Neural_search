@@ -31,8 +31,10 @@ data/indices/
 data/documents/
 data/qdrant/
 data/snapshots/
+data/collections/
 .pdf
 .json
+implementation.md
 
 # --- ML Artifacts (large binaries) ---
 artifacts/models/
