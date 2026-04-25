@@ -34,6 +34,9 @@ class Settings(BaseSettings):
 
     # Embedding
     embedding_model: str = "all-MiniLM-L6-v2"
+    
+    #Re-ranker model
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     # Chunking
     chunk_size: int = 512

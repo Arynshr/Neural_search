@@ -1,23 +1,44 @@
+from __future__ import annotations
+
 import time
 from datetime import datetime, timezone
-from fastapi import APIRouter, UploadFile, File, HTTPException, Request
+
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from loguru import logger
 
 from neural_search.api.schemas import (
-    CreateCollectionRequest, CollectionMeta,
-    SearchRequest, SearchResponse, DebugResponse, ChunkResult,
-    IngestResponse, HealthResponse,
+    ChunkResult,
+    CollectionMeta,
+    CreateCollectionRequest,
+    DebugResponse,
+    HealthResponse,
+    IngestResponse,
+    LatencyBreakdown,
+    SearchRequest,
+    SearchResponse,
 )
 from neural_search.collections.manager import CollectionManager
-from neural_search.retrieval.sparse import BM25sRetriever
+from neural_search.config import settings
+from neural_search.ingestion.pipeline import run_ingestion
 from neural_search.retrieval.dense import QdrantRetriever
 from neural_search.retrieval.hybrid import HybridRetriever
+from neural_search.retrieval.learned import LearnedHybridFusion
+from neural_search.retrieval.reranker import CrossEncoderReranker
+from neural_search.retrieval.sparse import BM25sRetriever
 from neural_search.synthesis.groq_client import GroqSynthesizer
-from neural_search.ingestion.pipeline import run_ingestion
-from neural_search.config import settings
 
 router = APIRouter()
 collection_manager = CollectionManager()
+
+# Phase 4: reranker loaded once at startup, shared across requests
+_reranker: CrossEncoderReranker | None = None
+
+
+def _get_reranker() -> CrossEncoderReranker:
+    global _reranker
+    if _reranker is None:
+        _reranker = CrossEncoderReranker()
+    return _reranker
 
 
 def _get_hybrid(slug: str) -> HybridRetriever:
@@ -28,7 +49,6 @@ def _get_hybrid(slug: str) -> HybridRetriever:
 
 
 def _require_collection(slug: str) -> dict:
-    """Raise 404 immediately if collection doesn't exist."""
     col = collection_manager.get_collection(slug)
     if not col:
         raise HTTPException(status_code=404, detail=f"Collection '{slug}' not found")
@@ -36,6 +56,7 @@ def _require_collection(slug: str) -> dict:
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
+
 @router.get("/health", response_model=HealthResponse)
 def health():
     cols = collection_manager.list_collections()
@@ -47,6 +68,7 @@ def health():
 
 
 # ── Collections ───────────────────────────────────────────────────────────────
+
 @router.get("/collections", response_model=list[CollectionMeta])
 def list_collections():
     return collection_manager.list_collections()
@@ -67,7 +89,6 @@ def get_collection(slug: str):
 
 @router.delete("/collections/{slug}", status_code=204)
 def delete_collection(slug: str):
-    # #15: confirm collection exists BEFORE mutating Qdrant
     _require_collection(slug)
     try:
         dense = QdrantRetriever(collection_slug=slug)
@@ -78,6 +99,7 @@ def delete_collection(slug: str):
 
 
 # ── Ingest ────────────────────────────────────────────────────────────────────
+
 @router.post("/collections/{slug}/ingest", response_model=IngestResponse)
 async def ingest(slug: str, file: UploadFile = File(...), force: bool = False):
     _require_collection(slug)
@@ -103,15 +125,13 @@ async def ingest(slug: str, file: UploadFile = File(...), force: bool = False):
         source=dest,
         sparse_retriever=sparse,
         dense_retriever=dense,
-        collection_slug=slug,    # #9: pass slug for per-collection snapshot path
+        collection_slug=slug,
     )
 
     if not chunks:
         warnings.append("No chunks extracted — check document content")
 
     total_tokens = sum(c.token_count for c in chunks)
-
-    # #4: page count = unique pages parsed, not max chunk page number
     page_count = len({c.page for c in chunks})
 
     collection_manager.add_file_record(slug, {
@@ -136,39 +156,79 @@ async def ingest(slug: str, file: UploadFile = File(...), force: bool = False):
 
 
 # ── Search ────────────────────────────────────────────────────────────────────
+
 @router.post("/search", response_model=SearchResponse)
 async def search(body: SearchRequest, request: Request):
     _require_collection(body.collection)
 
-    t0 = time.perf_counter()
+    t_total = time.perf_counter()
     hybrid = _get_hybrid(body.collection)
+
+    # ── Retrieval ──────────────────────────────────────────────────────────────
+    t_retrieval = time.perf_counter()
 
     if body.mode == "sparse":
         results = hybrid._sparse.search(body.query, k=body.k)
     elif body.mode == "dense":
         results = hybrid._dense.search(body.query, k=body.k)
+    elif body.mode == "learned":
+        # Phase 4: learned hybrid fusion — falls back to RRF if model not trained
+        fusion = LearnedHybridFusion(sparse=hybrid._sparse, dense=hybrid._dense)
+        results = fusion.search(body.query, k=body.k)
     else:
         results = hybrid.search(body.query, k=body.k)
 
+    retrieval_ms = round((time.perf_counter() - t_retrieval) * 1000, 2)
+
+    # ── Reranking (Phase 4, optional) ─────────────────────────────────────────
+    rerank_ms: float | None = None
+    reranked = False
+
+    if body.rerank and results:
+        t_rerank = time.perf_counter()
+        results = _get_reranker().rerank(body.query, results, top_k=body.rerank_top_k)
+        rerank_ms = round((time.perf_counter() - t_rerank) * 1000, 2)
+        reranked = True
+
+    # ── Synthesis (optional) ───────────────────────────────────────────────────
     synthesis = None
+    synthesis_ms: float | None = None
+
     if body.synthesize:
+        t_synth = time.perf_counter()
         synthesizer: GroqSynthesizer = request.app.state.synthesizer
         synthesis = synthesizer.synthesize(body.query, results)
+        synthesis_ms = round((time.perf_counter() - t_synth) * 1000, 2)
 
-    latency_ms = round((time.perf_counter() - t0) * 1000, 2)
+    total_ms = round((time.perf_counter() - t_total) * 1000, 2)
+
     logger.info(
-        f"Search | collection={body.collection} | mode={body.mode} | latency={latency_ms}ms"
+        f"Search | collection={body.collection} mode={body.mode} "
+        f"rerank={reranked} retrieval={retrieval_ms}ms "
+        f"rerank={rerank_ms}ms synthesis={synthesis_ms}ms total={total_ms}ms"
     )
+
+    # Inject collection into each result for ChunkResult contract
+    enriched = [{**r, "collection": body.collection} for r in results]
 
     return SearchResponse(
         query=body.query,
         collection=body.collection,
         mode=body.mode,
-        results=[ChunkResult(**r) for r in results],
+        reranked=reranked,
+        results=[ChunkResult(**r) for r in enriched],
         synthesis=synthesis,
-        latency_ms=latency_ms,
+        latency_ms=total_ms,          # backwards compat
+        latency=LatencyBreakdown(
+            retrieval_ms=retrieval_ms,
+            rerank_ms=rerank_ms,
+            synthesis_ms=synthesis_ms,
+            total_ms=total_ms,
+        ),
     )
 
+
+# ── Debug ─────────────────────────────────────────────────────────────────────
 
 @router.get("/search/debug", response_model=DebugResponse)
 def search_debug(query: str, collection: str, k: int = 10):

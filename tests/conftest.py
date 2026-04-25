@@ -1,6 +1,5 @@
 """
 Shared fixtures for all tests.
-
 Design rules:
 - patch_settings is autouse — every test gets a safe Settings mock, no .env needed
 - All mock attributes match the actual Settings schema exactly
@@ -13,6 +12,7 @@ from unittest.mock import MagicMock, create_autospec
 
 
 # ── Autouse: patch settings before every test ─────────────────────────────────
+
 @pytest.fixture(autouse=True)
 def patch_settings(tmp_path, monkeypatch):
     """
@@ -28,6 +28,7 @@ def patch_settings(tmp_path, monkeypatch):
     mock.groq_api_key = "test-key"
     mock.groq_model = "llama3-8b-8192"
     mock.embedding_model = "all-MiniLM-L6-v2"
+    mock.reranker_model = "cross-encoder/ms-marco-MiniLM-L-6-v2"  # Phase 4
     mock.chunk_size = 256
     mock.chunk_overlap = 32
     mock.top_k = 5
@@ -37,6 +38,7 @@ def patch_settings(tmp_path, monkeypatch):
     mock.bm25_index_path = tmp_path / "data" / "bm25_index"
     mock.bm25_path_for.side_effect = lambda slug: tmp_path / "data" / "bm25_index" / slug
     mock.documents_path_for.side_effect = lambda slug: tmp_path / "data" / "documents" / slug
+    mock.snapshot_path_for.side_effect = lambda slug: tmp_path / "data" / "snapshots" / slug
     mock.ensure_dirs.return_value = None
     mock.assert_groq_configured.return_value = None
 
@@ -45,6 +47,7 @@ def patch_settings(tmp_path, monkeypatch):
 
 
 # ── Sample chunks ─────────────────────────────────────────────────────────────
+
 @pytest.fixture
 def sample_chunks():
     from neural_search.ingestion.chunker import Chunk
@@ -63,6 +66,7 @@ def sample_chunks():
 
 
 # ── Real PDF fixture ──────────────────────────────────────────────────────────
+
 @pytest.fixture
 def sample_pdf(tmp_path) -> Path:
     try:
@@ -84,6 +88,7 @@ def sample_pdf(tmp_path) -> Path:
 
 
 # ── Real DOCX fixture ─────────────────────────────────────────────────────────
+
 @pytest.fixture
 def sample_docx(tmp_path) -> Path:
     try:
