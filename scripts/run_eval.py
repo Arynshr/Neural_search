@@ -32,8 +32,7 @@ from neural_search.retrieval.dense import QdrantRetriever
 from neural_search.retrieval.hybrid import HybridRetriever
 from neural_search.retrieval.sparse import BM25sRetriever
 
-MODES = ["sparse", "dense", "hybrid"]
-
+MODES = ["sparse", "dense", "hybrid", "learned"]
 
 def _build_retrievers(collection: str):
     sparse = BM25sRetriever(collection_slug=collection)
