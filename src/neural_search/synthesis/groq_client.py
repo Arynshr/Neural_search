@@ -1,52 +1,65 @@
-import time
+from __future__ import annotations
+
 import random
+
+from groq import Groq
 from loguru import logger
-from groq import Groq, RateLimitError, APIError
-from neural_search.config import settings as global_settings
+
+from neural_search.config import get_settings
 from neural_search.synthesis.prompt import build_prompt
 
-_MAX_BACKOFF = 32  # seconds
+settings = get_settings()
 
-# Current recommended model — update here when Groq deprecates again
+_MAX_BACKOFF = 32
 _DEFAULT_MODEL = "llama-3.1-8b-instant"
-
-# Track deprecated models explicitly
 _DEPRECATED_MODELS = {"llama3-8b-8192"}
 
 _FALLBACK_RESPONSE = {
-    "answer": "Unable to generate answer — please try again.",
+    "answer": "Unable to generate an answer at this time.",
     "sources_used": [],
+    "model": _DEFAULT_MODEL,
 }
+
+
+def _get(chunk, key: str):
+    if isinstance(chunk, dict):
+        return chunk.get(key)
+    return getattr(chunk, key, None)
 
 
 class GroqSynthesizer:
     def __init__(self, settings_obj=None):
-        # Allow dependency injection for testability
-        self._settings = settings_obj or global_settings
+        s = settings_obj or settings
+        s.assert_groq_configured()
+        model = s.groq_model
+        if model in _DEPRECATED_MODELS:
+            logger.warning(f"Groq model '{model}' is deprecated — using {_DEFAULT_MODEL}")
+            model = _DEFAULT_MODEL
+        self._client = Groq(api_key=s.groq_api_key)
+        self._model = model
 
-        self._settings.assert_groq_configured()
-        self._client = Groq(api_key=self._settings.groq_api_key)
+    def synthesize(self, query: str, chunks: list, retries: int = 3) -> dict | None:
+        """
+        Synthesize an answer from retrieved chunks.
+        Returns None if synthesis should not proceed (handled upstream by confidence gate).
+        """
+        if not settings.synthesis_enabled:
+            return None
 
-        # Handle deprecated model fallback
-        if self._settings.groq_model in _DEPRECATED_MODELS:
-            self._model = _DEFAULT_MODEL
-            logger.warning(
-                f"Model '{self._settings.groq_model}' is decommissioned. "
-                f"Switching to '{_DEFAULT_MODEL}'. Update GROQ_MODEL in .env."
-            )
-        else:
-            self._model = self._settings.groq_model
-
-    def synthesize(self, query: str, chunks: list, retries: int = 3) -> dict:
         context_chunks = chunks[:5]
         prompt = build_prompt(query, context_chunks)
 
         sources = [
-            {"source_file": _get(c, "source_file"), "page": _get(c, "page")}
+            {
+                "chunk_id": _get(c, "chunk_id"),
+                "source_file": _get(c, "source_file"),
+                "source_url": _get(c, "source_url"),
+                "page": _get(c, "page"),
+            }
             for c in context_chunks
         ]
 
-        for attempt in range(1, retries + 1):
+        for attempt in range(retries):
             try:
                 response = self._client.chat.completions.create(
                     model=self._model,
@@ -54,34 +67,21 @@ class GroqSynthesizer:
                         {"role": "system", "content": prompt["system"]},
                         {"role": "user", "content": prompt["user"]},
                     ],
+                    max_tokens=512,
                     temperature=0.2,
-                    max_tokens=1024,
                 )
                 return {
                     "answer": response.choices[0].message.content.strip(),
                     "sources_used": sources,
                     "model": self._model,
                 }
-
-            except RateLimitError:
-                base = 2 ** attempt
-                jitter = random.uniform(0, 1)
-                wait = min(base + jitter, _MAX_BACKOFF)
-
-                logger.warning(
-                    f"Groq rate limit — retrying in {wait:.1f}s "
-                    f"(attempt {attempt}/{retries})"
-                )
+            except Exception as e:
+                if attempt == retries - 1:
+                    logger.error(f"Groq synthesis failed after {retries} attempts: {e}")
+                    return _FALLBACK_RESPONSE
+                wait = min(2 ** attempt + random.uniform(0, 1), _MAX_BACKOFF)
+                logger.warning(f"Groq attempt {attempt + 1} failed: {e} — retrying in {wait:.1f}s")
+                import time
                 time.sleep(wait)
 
-            except APIError as e:
-                logger.error(f"Groq API error: {e}")
-                break
-
-        return {**_FALLBACK_RESPONSE, "model": self._model}
-
-
-def _get(chunk, key: str):
-    if isinstance(chunk, dict):
-        return chunk[key]
-    return getattr(chunk, key)
+        return _FALLBACK_RESPONSE
