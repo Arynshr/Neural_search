@@ -5,8 +5,6 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
-# ── Collections ───────────────────────────────────────────────────────────────
-
 class CreateCollectionRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=64)
     description: str = Field(default="", max_length=256)
@@ -32,18 +30,20 @@ class CollectionMeta(BaseModel):
     total_tokens: int
 
 
-# ── Search ────────────────────────────────────────────────────────────────────
-
 class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     collection: str
     k: int = Field(default=10, ge=1, le=50)
     synthesize: bool = False
-    # Phase 4: "learned" added
+    # "learned" kept for backward compat with test_phase4_reranker.py
     mode: Literal["hybrid", "sparse", "dense", "learned"] = "hybrid"
-    # Phase 4: optional reranking
+    # original rerank fields kept — still honoured in routes.py
     rerank: bool = False
     rerank_top_k: int = Field(default=5, ge=1, le=50)
+    # new fields
+    expand: bool = False
+    web_search: bool = False
+    query_type: Literal["keyword", "semantic", "vague"] = "semantic"
 
 
 class ChunkResult(BaseModel):
@@ -55,11 +55,13 @@ class ChunkResult(BaseModel):
     score: float
     rank: int
     source: str
-    collection: str
+    collection: Optional[str] = None          # added by routes.py on every result
     rrf_score: Optional[float] = None
-    # Phase 4: only populated when rerank=True
     rerank_score: Optional[float] = None
     rerank_rank: Optional[int] = None
+    # new web fields
+    source_url: Optional[str] = None
+    freshness_weight: Optional[float] = None
 
 
 class SynthesisResult(BaseModel):
@@ -68,7 +70,6 @@ class SynthesisResult(BaseModel):
     model: str
 
 
-# Phase 4: split latency breakdown — kept backwards-compat via latency_ms
 class LatencyBreakdown(BaseModel):
     retrieval_ms: float
     rerank_ms: Optional[float] = None
@@ -78,40 +79,34 @@ class LatencyBreakdown(BaseModel):
 
 class SearchResponse(BaseModel):
     query: str
-    collection: str
     mode: str
-    reranked: bool = False              # Phase 4
+    reranked: bool = False
     results: list[ChunkResult]
     synthesis: Optional[SynthesisResult] = None
-    latency_ms: float                   # kept for backwards compat
-    latency: Optional[LatencyBreakdown] = None  # Phase 4
+    latency_ms: float
+    latency: Optional[LatencyBreakdown] = None
+    # new response fields
+    web_results_used: bool = False
+    retrieval_confidence: float = 0.0
+    synthesis_triggered: bool = False
+    expansion_queries: list[str] = []
 
-
-# ── Ingest ────────────────────────────────────────────────────────────────────
 
 class IngestResponse(BaseModel):
     status: str
-    collection: str
-    filename: str
     chunks_indexed: int
-    tokens: int
-    pages: int
     warnings: list[str] = []
 
 
-# ── Debug ─────────────────────────────────────────────────────────────────────
-
 class DebugResponse(BaseModel):
-    query: str
-    collection: str
     sparse: list[dict]
     dense: list[dict]
     hybrid_rrf: list[dict]
+    web: list[dict] = []                      # new
+    expansion_queries: list[str] = []         # new
 
-
-# ── Health ────────────────────────────────────────────────────────────────────
 
 class HealthResponse(BaseModel):
-    status: str
+    status: str = "ok"
     collections_count: int
-    total_chunks: int
+    tavily_enabled: bool = False
