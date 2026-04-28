@@ -32,6 +32,7 @@ data/documents/
 data/qdrant/
 data/snapshots/
 data/collections/
+data/.tiktoken_cache/
 .pdf
 .json
 implementation.md
