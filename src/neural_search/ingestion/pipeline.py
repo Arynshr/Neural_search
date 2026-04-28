@@ -31,7 +31,7 @@ def run_ingestion(
     reset: bool = False,
     export_snapshot: bool = True,
     collection_slug: str = "default",
-    settings_obj=None,   # ✅ injection for testability
+    settings_obj=None,   
 ) -> list[Chunk]:
     """
     Full ingestion pipeline: parse → chunk → index → (optional) JSONL snapshot.

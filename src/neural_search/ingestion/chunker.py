@@ -14,8 +14,6 @@ class Chunk:
     page: int
     chunk_index: int
     text: str
-    # #11: renamed to word_count to be honest about what we're measuring
-    # chunk_size is in characters (langchain default), this is whitespace tokens
     token_count: int
     metadata: dict = field(default_factory=dict)
 

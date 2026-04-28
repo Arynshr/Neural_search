@@ -1,7 +1,7 @@
 from pathlib import Path
 from dataclasses import dataclass, field
 from loguru import logger
-import fitz  # pymupdf
+import fitz 
 from docx import Document
 
 
