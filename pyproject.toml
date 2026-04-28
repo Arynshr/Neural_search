@@ -1,7 +1,7 @@
 [project]
 name = "neural_search"
-version = "0.1.0"
-description = "Hybrid semantic search over PDF/DOCX documents using BM25 + dense retrieval + RRF"
+version = "0.2.0"
+description = "Hybrid semantic search — BM25 + Dense + Web (Tavily) + Reranking + RRF"
 readme = "README.md"
 authors = [
     { name = "Aryanshr", email = "Arynshr@users.noreply.github.com" }
@@ -16,14 +16,19 @@ dependencies = [
     # Chunking
     "langchain-text-splitters>=0.2.0",
 
+    # Token counting (replaces word-split hack)
+    "tiktoken>=0.7.0",
+
     # Sparse retrieval
     "bm25s>=0.1.10",
     "nltk>=3.8.0",
 
-    # Dense retrieval
+    # Dense retrieval + reranking
     "sentence-transformers>=3.0.0",
     "qdrant-client>=1.9.0",
-    "scikit-learn>=1.4.0",
+
+    # Web retrieval
+    "tavily-python>=0.3.0",
 
     # Inference
     "groq>=0.9.0",
@@ -31,6 +36,7 @@ dependencies = [
     # API
     "fastapi>=0.111.0",
     "uvicorn>=0.29.0",
+    "python-multipart>=0.0.9",
     "pydantic>=2.7.0",
     "pydantic-settings>=2.3.0",
 
@@ -41,6 +47,7 @@ dependencies = [
     "loguru>=0.7.2",
     "python-dotenv>=1.0.0",
     "tqdm>=4.66.0",
+    "numpy>=1.26.0",
 ]
 
 [project.optional-dependencies]
@@ -53,7 +60,6 @@ dev = [
 
 [project.scripts]
 neural-search-api = "neural_search.api.main:app"
-ingest = "scripts.ingest_documents:main"
 
 [build-system]
 requires = ["hatchling"]
