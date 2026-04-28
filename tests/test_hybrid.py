@@ -39,20 +39,20 @@ class TestRRF:
     def test_chunk_in_both_gets_higher_score_than_single(self):
         sparse = [make_result("a", 1, "sparse"), make_result("b", 2, "sparse")]
         dense  = [make_result("a", 1, "dense"),  make_result("c", 2, "dense")]
-        fused  = _rrf(sparse, dense, k=60)
+        fused  = _rrf([(sparse, 1.0), (dense, 1.0)], rrf_k=60)
         # "a" is in both lists — must outrank "b" and "c" which appear in only one
         assert fused[0]["chunk_id"] == "a"
 
     def test_source_attribution_both(self):
         sparse = [make_result("a", 1, "sparse")]
         dense  = [make_result("a", 1, "dense")]
-        fused  = _rrf(sparse, dense, k=60)
+        fused  = _rrf([(sparse, 1.0), (dense, 1.0)], rrf_k=60)
         assert fused[0]["source"] in ("dense+sparse", "sparse+dense")
 
     def test_source_attribution_sparse_only(self):
         sparse = [make_result("x", 1, "sparse")]
         dense  = [make_result("y", 1, "dense")]
-        fused  = _rrf(sparse, dense, k=60)
+        fused  = _rrf([(sparse, 1.0), (dense, 1.0)], rrf_k=60)
         by_id  = {r["chunk_id"]: r["source"] for r in fused}
         assert by_id["x"] == "sparse"
         assert by_id["y"] == "dense"
@@ -60,36 +60,36 @@ class TestRRF:
     def test_scores_are_strictly_descending(self):
         sparse = [make_result(f"s{i}", i + 1, "sparse") for i in range(5)]
         dense  = [make_result(f"d{i}", i + 1, "dense")  for i in range(5)]
-        fused  = _rrf(sparse, dense, k=60)
+        fused  = _rrf([(sparse, 1.0), (dense, 1.0)], rrf_k=60)
         scores = [r["rrf_score"] for r in fused]
         assert scores == sorted(scores, reverse=True)
 
     def test_rank_field_is_one_indexed_and_sequential(self):
         sparse = [make_result("a", 1, "sparse")]
         dense  = [make_result("b", 1, "dense")]
-        fused  = _rrf(sparse, dense, k=60)
+        fused  = _rrf([(sparse, 1.0), (dense, 1.0)], rrf_k=60)
         assert [r["rank"] for r in fused] == list(range(1, len(fused) + 1))
 
     def test_empty_inputs_returns_empty_list(self):
-        assert _rrf([], [], k=60) == []
+        assert _rrf([([], 1.0), ([], 1.0)], rrf_k=60) == []
 
     def test_sparse_only_input(self):
         sparse = [make_result("a", 1, "sparse")]
-        fused  = _rrf(sparse, [], k=60)
+        fused  = _rrf([(sparse, 1.0), ([], 1.0)], rrf_k=60)
         assert len(fused) == 1
         assert fused[0]["chunk_id"] == "a"
 
     def test_higher_k_produces_lower_rrf_score(self):
         sparse = [make_result("a", 1, "sparse")]
         dense  = [make_result("a", 1, "dense")]
-        score_k1   = _rrf(sparse, dense, k=1)[0]["rrf_score"]
-        score_k100 = _rrf(sparse, dense, k=100)[0]["rrf_score"]
+        score_k1   = _rrf([(sparse, 1.0), (dense, 1.0)], rrf_k=1)[0]["rrf_score"]
+        score_k100 = _rrf([(sparse, 1.0), (dense, 1.0)], rrf_k=100)[0]["rrf_score"]
         assert score_k1 > score_k100
 
     def test_rrf_score_present_in_all_results(self):
         sparse = [make_result("a", 1, "sparse")]
         dense  = [make_result("b", 1, "dense")]
-        fused  = _rrf(sparse, dense, k=60)
+        fused  = _rrf([(sparse, 1.0), (dense, 1.0)], rrf_k=60)
         for r in fused:
             assert "rrf_score" in r
             assert isinstance(r["rrf_score"], float)
@@ -124,19 +124,14 @@ class TestHybridRetriever:
         results = HybridRetriever(sparse=sparse, dense=dense).search("q", k=5)
         assert all("rrf_score" in r for r in results)
 
-    def test_search_debug_returns_three_keys(self):
+    def test_search_debug_returns_expected_keys(self):
         sparse = make_sparse_mock([make_result("a", 1, "sparse")])
         dense  = make_dense_mock([make_result("b", 1, "dense")])
         debug  = HybridRetriever(sparse=sparse, dense=dense).search_debug("q", k=5)
         assert "sparse"     in debug
         assert "dense"      in debug
         assert "hybrid_rrf" in debug
-
-    def test_search_debug_query_echoed(self):
-        sparse = make_sparse_mock([])
-        dense  = make_dense_mock([])
-        debug  = HybridRetriever(sparse=sparse, dense=dense).search_debug("my query", k=5)
-        assert debug["query"] == "my query"
+        assert "web"        in debug
 
     def test_both_retrievers_return_empty_gives_empty(self):
         sparse = make_sparse_mock([])

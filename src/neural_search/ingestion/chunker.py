@@ -1,9 +1,24 @@
+from __future__ import annotations
+
 import hashlib
 from dataclasses import dataclass, field
+
+import tiktoken
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from loguru import logger
-from neural_search.config import settings
-from neural_search.ingestion.parser import ParsedPage
+
+from .parser import ParsedPage
+
+_TOKENIZER = tiktoken.get_encoding("cl100k_base")
+
+
+def _count_tokens(text: str) -> int:
+    return len(_TOKENIZER.encode(text))
+
+
+def _make_chunk_id(source_file: str, chunk_index: int) -> str:
+    raw = f"{source_file}::{chunk_index}"
+    return hashlib.sha1(raw.encode()).hexdigest()[:16]
 
 
 @dataclass
@@ -14,45 +29,44 @@ class Chunk:
     page: int
     chunk_index: int
     text: str
-    token_count: int
+    token_count: int          # accurate — tiktoken cl100k_base
     metadata: dict = field(default_factory=dict)
 
 
-def _make_chunk_id(source_file: str, chunk_index: int) -> str:
-    raw = f"{source_file}::{chunk_index}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
-
-
-def chunk_pages(pages: list[ParsedPage]) -> list[Chunk]:
+def chunk_pages(
+    pages: list[ParsedPage],
+    chunk_size: int = 512,
+    chunk_overlap: int = 64,
+) -> list[Chunk]:
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=settings.chunk_size,
-        chunk_overlap=settings.chunk_overlap,
-        length_function=len,   # character-based, honest about unit
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        length_function=len,  # character-based splitter; token count stored separately
     )
 
     all_chunks: list[Chunk] = []
     global_index = 0
 
     for page in pages:
-        splits = splitter.split_text(page.text)
-        if not splits:
-            logger.debug(f"No chunks from {page.source_file} page {page.page}")
+        if not page.text.strip():
             continue
-
-        for i, text in enumerate(splits):
+        for text in splitter.split_text(page.text):
             clean_text = text.strip()
-            chunk = Chunk(
-                chunk_id=_make_chunk_id(page.source_file, global_index),
-                doc_id=page.doc_id,
-                source_file=page.source_file,
-                page=page.page,
-                chunk_index=global_index,
-                text=clean_text,
-                token_count=len(clean_text.split()),   # approx word count
-                metadata={**page.metadata, "split_index": i},
+            if not clean_text:
+                continue
+            all_chunks.append(
+                Chunk(
+                    chunk_id=_make_chunk_id(page.source_file, global_index),
+                    doc_id=page.doc_id,
+                    source_file=page.source_file,
+                    page=page.page,
+                    chunk_index=global_index,
+                    text=clean_text,
+                    token_count=_count_tokens(clean_text),  # accurate
+                    metadata=page.metadata,
+                )
             )
-            all_chunks.append(chunk)
             global_index += 1
 
-    logger.info(f"Total chunks produced: {len(all_chunks)}")
+    logger.debug(f"Chunked {len(pages)} pages → {len(all_chunks)} chunks")
     return all_chunks

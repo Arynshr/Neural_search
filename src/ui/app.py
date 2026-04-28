@@ -76,11 +76,15 @@ with tab_search:
                                 "k": options["top_k"],
                                 "mode": options["mode"],
                                 "synthesize": options["synthesize"],
+                                "expand": options["expand"],
+                                "web_search": options["web_search"],
                             },
                             timeout=30,
                         )
                         if resp.status_code == 200:
                             data = resp.json()
+                            synthesis_triggered = data.get("synthesis_triggered", False)
+                            retrieval_confidence = data.get("retrieval_confidence", 0.0)
                             st.session_state.query_history.append({
                                 "query": query,
                                 "collection": active_collection,
@@ -88,9 +92,20 @@ with tab_search:
                                 "mode": data["mode"],
                                 "results": len(data["results"]),
                             })
-                            if options["synthesize"] and data.get("synthesis"):
-                                render_answer(data["synthesis"])
-                            render_results(data["results"], data["latency_ms"], data["mode"])
+                            if options["synthesize"]:
+                                render_answer(
+                                    synthesis=data.get("synthesis"),
+                                    triggered=synthesis_triggered,
+                                    confidence=retrieval_confidence,
+                                )
+                            render_results(
+                                results=data["results"],
+                                latency_ms=data["latency_ms"],
+                                mode=data["mode"],
+                                web_results_used=data.get("web_results_used", False),
+                                retrieval_confidence=retrieval_confidence,
+                                expansion_queries=data.get("expansion_queries", []),
+                            )
                         else:
                             st.error(f"Search error: {resp.text}")
 

@@ -216,7 +216,7 @@ class LearnedHybridFusion:
             # Graceful fallback to RRF
             logger.debug("Using RRF fallback (no trained model)")
             from neural_search.retrieval.hybrid import _rrf
-            return _rrf(sparse_results, dense_results)[:k]
+            return _rrf([(sparse_results, 1.0), (dense_results, 1.0)])[:k]
 
         sparse_rank, sparse_score = _build_rank_score_maps(sparse_results)
         dense_rank, dense_score = _build_rank_score_maps(dense_results)
