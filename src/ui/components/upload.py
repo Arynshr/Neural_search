@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
-
-API_BASE = "http://localhost:8000"
+from ui.config import API_BASE
 
 
 def render_upload_tab(active_collection: str | None):
@@ -49,7 +48,8 @@ def render_upload_tab(active_collection: str | None):
 
     st.markdown(f"**{len(files_to_process)} file(s) ready to ingest:**")
     for f in files_to_process:
-        size_kb = round(len(f.getvalue()) / 1024, 1)
+        file_bytes = f.getvalue()  # read once; avoids double-consuming the stream
+        size_kb = round(len(file_bytes) / 1024, 1)
         st.caption(f"📄 {f.name}  —  {size_kb} KB")
 
     if st.button("Ingest Documents", type="primary"):
@@ -58,14 +58,16 @@ def render_upload_tab(active_collection: str | None):
         summary = []
 
         for i, upload in enumerate(files_to_process):
+            # Advance progress before processing so the bar reflects current work
             progress.progress(
-                (i) / len(files_to_process),
-                text=f"Processing {upload.name}...",
+                (i + 1) / len(files_to_process),
+                text=f"Processing {upload.name} ({i + 1}/{len(files_to_process)})...",
             )
+            file_bytes = upload.getvalue()  # read once
             try:
                 resp = requests.post(
                     f"{API_BASE}/collections/{active_collection}/ingest",
-                    files={"file": (upload.name, upload.getvalue(), upload.type)},
+                    files={"file": (upload.name, file_bytes, upload.type)},
                     params={"force": str(force).lower()},
                     timeout=120,
                 )
@@ -74,34 +76,29 @@ def render_upload_tab(active_collection: str | None):
                     summary.append({
                         "file": upload.name,
                         "chunks": data["chunks_indexed"],
-                        "tokens": data["tokens"],
-                        "pages": data["pages"],
                         "status": "✓",
                         "warnings": data.get("warnings", []),
                     })
                 elif resp.status_code == 409:
-                    summary.append({"file": upload.name, "status": "⚠ skipped (duplicate)", "chunks": 0, "tokens": 0, "pages": 0, "warnings": []})
+                    summary.append({"file": upload.name, "status": "⚠ skipped (duplicate)", "chunks": 0, "warnings": []})
                 else:
-                    summary.append({"file": upload.name, "status": "✗ failed", "chunks": 0, "tokens": 0, "pages": 0, "warnings": [resp.text]})
+                    summary.append({"file": upload.name, "status": "✗ failed", "chunks": 0, "warnings": [resp.text]})
             except Exception as e:
-                summary.append({"file": upload.name, "status": "✗ error", "chunks": 0, "tokens": 0, "pages": 0, "warnings": [str(e)]})
+                summary.append({"file": upload.name, "status": "✗ error", "chunks": 0, "warnings": [str(e)]})
 
         progress.progress(1.0, text="Done!")
 
         # Results summary table
         st.markdown("### Ingestion Results")
         total_chunks = sum(s["chunks"] for s in summary)
-        total_tokens = sum(s["tokens"] for s in summary)
 
         for s in summary:
             with st.container(border=True):
-                c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
+                c1, c2 = st.columns([4, 1])
                 c1.markdown(f"{s['status']} **{s['file']}**")
-                c2.caption(f"{s['pages']} pages")
-                c3.caption(f"{s['chunks']} chunks")
-                c4.caption(f"{s['tokens']:,} tokens")
+                c2.caption(f"{s['chunks']} chunks")
                 for w in s["warnings"]:
                     st.caption(f"⚠ {w}")
 
-        st.success(f"Complete — **{total_chunks} chunks**, **{total_tokens:,} tokens** indexed")
+        st.success(f"Complete — **{total_chunks} chunks** indexed")
         st.rerun()

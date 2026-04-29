@@ -6,9 +6,9 @@ from neural_search.ingestion.parser import parse_document, parse_directory
 from neural_search.ingestion.chunker import chunk_pages, Chunk
 
 
-def _export_jsonl(chunks: list[Chunk], path: Path) -> None:
+def _export_jsonl(chunks: list[Chunk], path: Path, mode: str = "w") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    with open(path, mode, encoding="utf-8") as f:
         for chunk in chunks:
             record = {
                 "chunk_id": chunk.chunk_id,
@@ -31,10 +31,14 @@ def run_ingestion(
     reset: bool = False,
     export_snapshot: bool = True,
     collection_slug: str = "default",
-    settings_obj=None,   
+    settings_obj=None,
 ) -> list[Chunk]:
     """
     Full ingestion pipeline: parse → chunk → index → (optional) JSONL snapshot.
+
+    When `source` is a single file, chunks are *added* to the existing BM25
+    corpus (incremental) rather than replacing it.  When `source` is a
+    directory (or `reset=True`), the index is rebuilt from scratch.
     """
     settings = settings_obj or global_settings
 
@@ -62,17 +66,22 @@ def run_ingestion(
         logger.warning("No chunks produced — check chunking config")
         return []
 
-    if export_snapshot:
-        if collection_slug == "default":
-            snapshot_path = settings.data_dir / "snapshots" / "chunks.jsonl"
-        else:
-            snapshot_path = settings.snapshot_path_for(collection_slug)
+    # Determine whether this is a full re-index or incremental add
+    is_incremental = source.is_file() and not reset
 
-        _export_jsonl(chunks, snapshot_path)
+    if export_snapshot:
+        snapshot_path = settings.snapshot_path_for(collection_slug)
+        # Append in incremental mode so previous chunks aren't clobbered
+        write_mode = "a" if is_incremental else "w"
+        _export_jsonl(chunks, snapshot_path, mode=write_mode)
 
     if sparse_retriever:
-        logger.info("Indexing into BM25 sparse retriever...")
-        sparse_retriever.index(chunks)
+        if is_incremental:
+            logger.info("Adding chunks to BM25 sparse retriever (incremental)...")
+            sparse_retriever.add(chunks)
+        else:
+            logger.info("Rebuilding BM25 sparse retriever (full index)...")
+            sparse_retriever.index(chunks)
 
     if dense_retriever:
         logger.info("Upserting into Qdrant dense retriever...")

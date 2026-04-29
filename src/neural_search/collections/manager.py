@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from loguru import logger
 from neural_search.config import settings
+from neural_search.retrieval.dense import QdrantRetriever
 
 MAX_COLLECTIONS = 10
 
@@ -81,9 +82,14 @@ class CollectionManager:
     def delete_collection(self, slug: str) -> None:
         if not self.get_collection(slug):
             raise ValueError(f"Collection '{slug}' not found.")
+        # Wipe Qdrant vector collection (best-effort — it may not exist)
+        try:
+            QdrantRetriever(collection_slug=slug).reset()
+        except Exception as e:
+            logger.warning(f"Could not wipe Qdrant collection '{slug}': {e}")
         for path in [
-            settings.data_dir / "bm25_index" / slug,
-            settings.data_dir / "documents" / slug,
+            settings.bm25_path_for(slug),
+            settings.documents_path_for(slug),
             self._base / slug,
         ]:
             if path.exists():

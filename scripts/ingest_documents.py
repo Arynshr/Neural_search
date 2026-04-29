@@ -19,7 +19,7 @@ def main():
     parser.add_argument(
         "--input-dir",
         type=Path,
-        default=settings.documents_dir,
+        default=settings.documents_path_for("default"),
         help="Path to directory or single file to ingest",
     )
     parser.add_argument(
@@ -34,8 +34,8 @@ def main():
     logger.info(f"Starting ingestion from: {args.input_dir}")
     logger.info(f"Reset: {args.reset}")
 
-    sparse = BM25sRetriever()
-    dense = QdrantRetriever()
+    sparse = BM25sRetriever(collection_slug="default")
+    dense = QdrantRetriever(collection_slug="default")
 
     chunks = run_ingestion(
         source=args.input_dir,

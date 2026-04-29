@@ -123,7 +123,14 @@ async def ingest(slug: str, file: UploadFile = File(...), force: bool = False):
     content = await file.read()
     dest.write_bytes(content)
 
-    chunks = run_ingestion(source=dest, collection_slug=slug)
+    sparse = BM25sRetriever(collection_slug=slug)
+    dense = QdrantRetriever(collection_slug=slug)
+    chunks = run_ingestion(
+        source=dest,
+        sparse_retriever=sparse,
+        dense_retriever=dense,
+        collection_slug=slug,
+    )
     if not chunks:
         warnings.append(f"No chunks produced from {filename}")
 

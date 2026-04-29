@@ -38,15 +38,36 @@ class BM25sRetriever:
         ]
 
     def index(self, chunks: list[Chunk]) -> None:
+        """Rebuild the index from scratch with exactly `chunks` (used for full re-index / reset)."""
         self._chunks = chunks
-        corpus_tokens = self._tokenize([c.text for c in chunks])
+        self._rebuild_and_persist()
+        logger.info(f"[{self._slug}] BM25 index built — {len(chunks)} chunks")
+
+    def add(self, new_chunks: list[Chunk]) -> None:
+        """Merge `new_chunks` into the existing corpus and rebuild.
+        
+        Existing chunks that share a source_file with any chunk in `new_chunks` are
+        replaced so re-ingesting a file doesn't create duplicate entries.
+        """
+        if not self._chunks:
+            self.load()  # pull persisted state if not already in memory
+        existing_sources = {c.source_file for c in new_chunks}
+        retained = [c for c in self._chunks if c.source_file not in existing_sources]
+        self._chunks = retained + new_chunks
+        self._rebuild_and_persist()
+        logger.info(
+            f"[{self._slug}] BM25 index updated — {len(self._chunks)} chunks total "
+            f"(+{len(new_chunks)} new)"
+        )
+
+    def _rebuild_and_persist(self) -> None:
+        corpus_tokens = self._tokenize([c.text for c in self._chunks])
         self._index = bm25s.BM25()
         self._index.index(corpus_tokens)
         with open(self._index_file, "wb") as f:
             pickle.dump(self._index, f)
         with open(self._chunks_file, "wb") as f:
             pickle.dump(self._chunks, f)
-        logger.info(f"[{self._slug}] BM25 index built — {len(chunks)} chunks")
 
     def load(self) -> bool:
         if self._index_file.exists() and self._chunks_file.exists():
