@@ -70,13 +70,13 @@ def label_query(query, results, relevance, allow_override=False):
     print("=" * 80)
 
     relevant = []
-
     i = 0
+
     while i < len(results):
         r = results[i]
         print_result(i, r)
 
-        cmd = input("1=yes 0=no s=skip r=restart q=quit >> ").strip().lower()
+        cmd = input("ENTER=yes 1=yes 0=no s=skip r=restart q=quit >> ").strip().lower()
 
         if cmd == "q":
             raise _Quit
@@ -85,7 +85,7 @@ def label_query(query, results, relevance, allow_override=False):
         elif cmd == "r":
             print("Restarting query...\n")
             return label_query(query, results, relevance, allow_override=True)
-        elif cmd == "1":
+        elif cmd == "" or cmd == "1":
             relevant.append(r["chunk_id"])
             i += 1
         elif cmd == "0":
@@ -129,7 +129,6 @@ def main():
                 continue
 
             results = retriever.search(q["text"], k=args.k)
-
             labels = label_query(q, results, relevance, args.override)
             relevance[q["id"]] = labels
 
