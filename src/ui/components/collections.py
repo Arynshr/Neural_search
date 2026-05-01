@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
-
-API_BASE = "http://localhost:8000"
+from ui.config import API_BASE
 
 
 def render_collections_tab():
