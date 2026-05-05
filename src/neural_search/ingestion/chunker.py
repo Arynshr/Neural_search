@@ -52,7 +52,7 @@ def chunk_pages(
             continue
         for text in splitter.split_text(page.text):
             clean_text = text.strip()
-            if not clean_text:
+            if not clean_text or len(clean_text.split()) < 50:
                 continue
             all_chunks.append(
                 Chunk(
