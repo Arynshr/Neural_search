@@ -24,6 +24,8 @@ if "query_history" not in st.session_state:
     st.session_state.query_history = []
 if "active_collection" not in st.session_state:
     st.session_state.active_collection = None
+if "tavily_calls" not in st.session_state:
+    st.session_state.tavily_calls = 0
 
 options = render_sidebar()
 active_collection = options["collection"]
@@ -91,7 +93,12 @@ with tab_search:
                                 "latency_ms": data["latency_ms"],
                                 "mode": data["mode"],
                                 "results": len(data["results"]),
+                                "retrieval_confidence": retrieval_confidence,
+                                "web_used": data.get("web_results_used", False),
+                                "latency": data.get("latency", {}),
                             })
+                            if data.get("web_results_used"):
+                                st.session_state.tavily_calls += 1
                             if options["synthesize"]:
                                 render_answer(
                                     synthesis=data.get("synthesis"),
@@ -131,11 +138,34 @@ with tab_history:
     else:
         for entry in reversed(history[-30:]):
             with st.container(border=True):
-                c1, c2, c3, c4 = st.columns([4, 2, 1, 1])
-                c1.markdown(f"**{entry['query']}**")
+                # Row 1: query + collection
+                c1, c2 = st.columns([5, 2])
+                web_icon = " 🌐" if entry.get("web_used") else ""
+                c1.markdown(f"**{entry['query']}**{web_icon}")
                 c2.caption(f"📁 {entry['collection']}")
+
+                # Row 2: mode | confidence | total latency | result count
+                c3, c4, c5, c6 = st.columns([2, 2, 2, 1])
                 c3.caption(f"`{entry['mode']}`")
-                c4.caption(f"{entry['latency_ms']} ms")
+                conf = entry.get("retrieval_confidence", 0.0)
+                c4.caption(f"conf: `{conf:.4f}`")
+                c5.caption(f"⏱ {entry['latency_ms']} ms total")
+                c6.caption(f"{entry.get('results', '?')} results")
+
+                # Row 3: per-component latency breakdown (if available)
+                lat = entry.get("latency") or {}
+                if lat:
+                    parts = []
+                    if lat.get("retrieval_ms") is not None:
+                        parts.append(f"retrieval: {lat['retrieval_ms']}ms")
+                    if lat.get("rerank_ms") is not None:
+                        parts.append(f"rerank: {lat['rerank_ms']}ms")
+                    if lat.get("synthesis_ms") is not None:
+                        parts.append(f"synthesis: {lat['synthesis_ms']}ms")
+                    if parts:
+                        st.caption("  " + "  |  ".join(parts))
+
         if st.button("Clear History"):
+            st.session_state.tavily_calls = 0
             st.session_state.query_history = []
             st.rerun()

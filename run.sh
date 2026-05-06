@@ -17,7 +17,7 @@
 #   ./run.sh test unit          Run unit tests only
 #   ./run.sh test integration   Run integration tests only
 #   ./run.sh test coverage      Run all tests with coverage report
-#   ./run.sh clean              Wipe all indexes and snapshots
+#   ./run.sh clean              Wipe all indexes, snapshots, uploaded documents, and collection metadata
 #   ./run.sh logs               Tail live API logs
 # =============================================================================
 
@@ -274,15 +274,29 @@ cmd_logs() {
 }
 
 cmd_clean() {
-    echo -e "${YELLOW}This will wipe all indexes, collections, and snapshots.${RESET}"
+    echo -e "${YELLOW}This will wipe ALL indexes, collection metadata, snapshots, and uploaded documents.${RESET}"
+    echo -e "${YELLOW}This cannot be undone.${RESET}"
     read -rp "Continue? [y/N] " confirm
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        # Indexes and metadata
         rm -rf \
             "$PROJECT_ROOT/data/qdrant/"* \
             "$PROJECT_ROOT/data/bm25_index/"* \
             "$PROJECT_ROOT/data/collections/"* \
-            "$PROJECT_ROOT/data/snapshots/"*
-        success "All indexes, collections, and snapshots cleared"
+            "$PROJECT_ROOT/data/snapshots/"* \
+            "$PROJECT_ROOT/data/learned_fusion/"* \
+            "$PROJECT_ROOT/data/training_pairs.jsonl"
+
+        # Uploaded documents — per-collection subdirectories
+        if [[ -d "$PROJECT_ROOT/data/documents" ]]; then
+            find "$PROJECT_ROOT/data/documents" -mindepth 1 -delete
+        fi
+
+        success "Wiped: qdrant, bm25_index, collections, snapshots, learned_fusion, training_pairs, documents"
+
+        # Recreate empty directory structure so the app starts cleanly
+        ensure_dirs
+        success "Empty data directories recreated — ready for fresh ingest"
     else
         log "Aborted"
     fi
@@ -298,7 +312,7 @@ cmd_help() {
     echo "  ingest                  Ingest documents from data/documents/"
     echo "  ingest --reset          Wipe indexes and reingest from scratch"
     echo "  verify                  Check BM25 and Qdrant index are in sync"
-    echo "  clean                   Wipe all indexes, collections, and snapshots"
+    echo "  clean                   Wipe all indexes, collections, snapshots, and uploaded documents"
     echo ""
     echo -e "${BOLD}Server${RESET}"
     echo "  api                     Start FastAPI server in foreground"

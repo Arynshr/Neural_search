@@ -67,6 +67,17 @@ def render_sidebar() -> dict:
     if expand:
         st.sidebar.caption("Query rephrased ×2 before retrieval.")
 
+    # ── Observability: Tavily call counter ───────────────────────────────────
+    tavily_calls = st.session_state.get("tavily_calls", 0)
+    if tavily_calls > 0 or web_search:
+        st.sidebar.divider()
+        color = "red" if tavily_calls >= 25 else ("orange" if tavily_calls >= 15 else "green")
+        st.sidebar.markdown(
+            f"**🌐 Tavily calls this session:** "
+            f"<span style='color:{color};font-weight:bold'>{tavily_calls}</span>/30 daily budget",
+            unsafe_allow_html=True,
+        )
+
     return {
         "collection": active_slug,
         "mode": mode,
