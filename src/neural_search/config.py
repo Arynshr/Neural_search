@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     tavily_enabled: bool = False
     tavily_max_results: int = 5
     tavily_weight: float = 0.6
-    web_trigger_threshold: float = 0.016  # RRF scale: fires when top result is weak (max RRF score ~0.033)
+    web_trigger_threshold: float = 0.010  # RRF max≈0.033; 0.010 ≈ bottom 20% — fires only on weak retrieval
 
     # ── Synthesis gating (new) ────────────────────────────────────────────────
     synthesis_threshold: float = 0.01  # RRF scores max ~0.033 — 0.4 was unreachable

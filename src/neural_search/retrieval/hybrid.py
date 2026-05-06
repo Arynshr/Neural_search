@@ -70,6 +70,7 @@ class HybridRetriever:
         self._sparse = sparse
         self._dense = dense
         self._web: Optional[object] = None
+        self._reranker: Optional[object] = None  # lazy-loaded on first use
 
         if settings.tavily_enabled:
             try:
@@ -193,10 +194,12 @@ class HybridRetriever:
         # ── Optional reranking ────────────────────────────────────────────────
         reranked_flag = False
         if rerank and len(fused) > 1:
-            from neural_search.retrieval.reranker import CrossEncoderReranker
+            if self._reranker is None:
+                from neural_search.retrieval.reranker import CrossEncoderReranker
+                self._reranker = CrossEncoderReranker()
+                logger.debug("CrossEncoderReranker loaded and cached on HybridRetriever")
             t0 = time.perf_counter()
-            reranker = CrossEncoderReranker()
-            fused = reranker.rerank(query, fused[: k * 2], top_k=rerank_top_k)
+            fused = self._reranker.rerank(query, fused[: k * 2], top_k=rerank_top_k)
             timings["rerank_ms"] = round((time.perf_counter() - t0) * 1000, 2)
             reranked_flag = True
         else:
