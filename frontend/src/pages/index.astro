@@ -1,0 +1,60 @@
+---
+import "../styles/global.css";
+import Hero from "../components/Hero.astro";
+import FeatureCard from "../components/FeatureCard.astro";
+import MetricsTable from "../components/MetricsTable.astro";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Neural Search — hybrid retrieval, measured</title>
+    <meta
+      name="description"
+      content="Sparse, dense, and fused retrieval evaluated side by side, with committed benchmark numbers at every stage."
+    />
+  </head>
+  <body class="bg-bg text-fg">
+    <Hero />
+
+    <section id="how-it-works" class="mx-auto max-w-6xl px-6 py-10">
+      <p class="font-mono text-xs uppercase tracking-widest text-muted">how it works</p>
+      <h2 class="mt-3 text-2xl font-semibold text-fg sm:text-3xl">Three retrievers, one fused ranking</h2>
+
+      <div class="mt-8 grid gap-5 sm:grid-cols-3">
+        <FeatureCard
+          accent="sparse"
+          label="sparse · BM25"
+          title="Lexical matching"
+          description="Fast, exact term overlap. Strong on keyword-heavy queries, blind to paraphrasing."
+        />
+        <FeatureCard
+          accent="dense"
+          label="dense · Qdrant"
+          title="Semantic matching"
+          description="Embedding similarity via all-MiniLM-L6-v2. Catches meaning, loses exact terms."
+        />
+        <FeatureCard
+          accent="hybrid"
+          label="hybrid · RRF + rerank"
+          title="Fused and reranked"
+          description="Reciprocal rank fusion merges both, then a cross-encoder reorders the top candidates."
+        />
+      </div>
+    </section>
+
+    <MetricsTable />
+
+    <footer class="border-t border-line px-6 py-10">
+      <div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 font-mono text-xs text-muted">
+        <span>Neural Search v3</span>
+        <div class="flex gap-5">
+          <a href="/" class="hover:text-fg">Docs</a>
+          <a href="/" class="hover:text-fg">GitHub</a>
+          <a href="/" class="hover:text-fg">API</a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

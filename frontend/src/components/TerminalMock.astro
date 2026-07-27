@@ -1,0 +1,70 @@
+---
+const lines = [
+  { label: "sparse", accent: "sparse", method: "BM25", ms: "12ms", score: "0.42" },
+  { label: "dense", accent: "dense", method: "Qdrant", ms: "31ms", score: "0.58" },
+  { label: "hybrid", accent: "hybrid", method: "RRF + rerank", ms: "46ms", score: "0.71 \u2190 returned" },
+];
+const colorClass: Record<string, string> = {
+  sparse: "text-sparse",
+  dense: "text-dense",
+  hybrid: "text-hybrid",
+};
+const requestBody = `'{"query":"how do agents handle uncertainty"}'`;
+---
+
+<div class="w-full max-w-xl overflow-hidden rounded-lg border border-line bg-panel shadow-2xl">
+  <div class="flex items-center gap-1.5 border-b border-line px-4 py-2.5">
+    <span class="h-2.5 w-2.5 rounded-full bg-sparse/70"></span>
+    <span class="h-2.5 w-2.5 rounded-full bg-dense/70"></span>
+    <span class="h-2.5 w-2.5 rounded-full bg-hybrid/70"></span>
+    <span class="ml-3 text-xs text-muted mono-nums">search.sh</span>
+  </div>
+
+  <div class="p-5 font-mono text-[13px] leading-relaxed">
+    <p class="text-fg">
+      <span class="text-muted">$</span> curl :8000/search -d
+      <span class="text-hybrid">{requestBody}</span>
+    </p>
+
+    <div class="mt-3 space-y-1.5">
+      {lines.map((l) => (
+        <p class={`term-line flex flex-wrap items-baseline gap-2 ${colorClass[l.accent]}`}>
+          <span class="w-14 shrink-0 uppercase text-[11px] tracking-wide">{l.label}</span>
+          <span class="text-fg/80">{l.method}</span>
+          <span class="mono-nums text-muted">{l.ms}</span>
+          <span class="mono-nums">{"score " + l.score}</span>
+        </p>
+      ))}
+    </div>
+
+    <p class="mt-3 text-muted">
+      <span class="animate-pulse">▍</span> confidence 0.71 &gt; threshold &mdash; synthesizing answer
+    </p>
+  </div>
+</div>
+
+<style>
+  .term-line {
+    animation: glow 4.2s ease-in-out infinite;
+    opacity: 0.55;
+  }
+  .term-line:nth-child(1) {
+    animation-delay: 0s;
+  }
+  .term-line:nth-child(2) {
+    animation-delay: 1.4s;
+  }
+  .term-line:nth-child(3) {
+    animation-delay: 2.8s;
+  }
+  @keyframes glow {
+    0%,
+    8% {
+      opacity: 1;
+    }
+    28%,
+    100% {
+      opacity: 0.55;
+    }
+  }
+</style>

@@ -1,0 +1,48 @@
+---
+import metrics from "../lib/metrics.json";
+
+const dot: Record<string, string> = {
+  sparse: "bg-sparse",
+  dense: "bg-dense",
+  hybrid: "bg-hybrid",
+};
+const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
+---
+
+<section id="benchmarks" class="mx-auto max-w-6xl px-6 py-20">
+  <p class="font-mono text-xs uppercase tracking-widest text-muted">benchmarked, not assumed</p>
+  <h2 class="mt-3 text-2xl font-semibold text-fg sm:text-3xl">
+    {metrics.queries_labeled} labeled queries, evaluated at k={metrics.k}
+  </h2>
+
+  <div class="mt-8 overflow-x-auto rounded-lg border border-line">
+    <table class="w-full min-w-[560px] border-collapse text-sm">
+      <thead>
+        <tr class="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
+          <th class="px-4 py-3 font-medium">Mode</th>
+          <th class="px-4 py-3 font-medium">P@{metrics.k}</th>
+          <th class="px-4 py-3 font-medium">Recall@{metrics.k}</th>
+          <th class="px-4 py-3 font-medium">MRR</th>
+          <th class="px-4 py-3 font-medium">nDCG@{metrics.k}</th>
+        </tr>
+      </thead>
+      <tbody class="mono-nums">
+        {metrics.rows.map((r) => (
+          <tr class="border-b border-line/60 last:border-none">
+            <td class="flex items-center gap-2 px-4 py-3 font-mono text-fg">
+              <span class={`h-2 w-2 rounded-full ${dot[r.accent]}`}></span>
+              {r.mode}
+            </td>
+            <td class="px-4 py-3 text-muted">{pct(r.p)}</td>
+            <td class="px-4 py-3 text-muted">{pct(r.recall)}</td>
+            <td class="px-4 py-3 text-muted">{pct(r.mrr)}</td>
+            <td class="px-4 py-3 text-fg">{pct(r.ndcg)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+  <p class="mt-3 text-xs text-muted">
+    Source: <code class="font-mono">evaluation/results/phase3.json</code> — committed at build time, not fetched live.
+  </p>
+</section>

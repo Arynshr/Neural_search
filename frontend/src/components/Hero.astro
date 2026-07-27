@@ -1,0 +1,34 @@
+---
+import TerminalMock from "./TerminalMock.astro";
+---
+
+<section class="mx-auto flex max-w-6xl flex-col gap-12 px-6 pb-20 pt-24 lg:flex-row lg:items-center lg:pt-32">
+  <div class="max-w-xl">
+    <p class="font-mono text-xs uppercase tracking-widest text-muted">hybrid retrieval, measured</p>
+    <h1 class="mt-4 text-4xl font-semibold leading-tight text-fg sm:text-5xl">
+      Every match is scored.<br />Nothing ships on a hunch.
+    </h1>
+    <p class="mt-5 text-base leading-relaxed text-muted">
+      Sparse, dense, and fused retrieval run side by side on every query.
+      Reranking and synthesis only fire when the numbers say they should.
+    </p>
+    <div class="mt-8 flex flex-wrap gap-3 font-mono text-sm">
+      <a
+        href="#benchmarks"
+        class="rounded-md bg-fg px-5 py-2.5 font-medium text-bg transition hover:opacity-90"
+      >
+        See the benchmarks
+      </a>
+      <a
+        href="#how-it-works"
+        class="rounded-md border border-line px-5 py-2.5 text-fg transition hover:border-hybrid/50"
+      >
+        How it works
+      </a>
+    </div>
+  </div>
+
+  <div class="flex flex-1 justify-center lg:justify-end">
+    <TerminalMock />
+  </div>
+</section>

@@ -1,0 +1,29 @@
+---
+interface Props {
+  accent: "sparse" | "dense" | "hybrid";
+  label: string;
+  title: string;
+  description: string;
+}
+const { accent, label, title, description } = Astro.props;
+
+const dot: Record<string, string> = {
+  sparse: "bg-sparse",
+  dense: "bg-dense",
+  hybrid: "bg-hybrid",
+};
+const ring: Record<string, string> = {
+  sparse: "border-sparse/30",
+  dense: "border-dense/30",
+  hybrid: "border-hybrid/30",
+};
+---
+
+<div class={`rounded-lg border ${ring[accent]} bg-panel p-6`}>
+  <div class="flex items-center gap-2 text-xs uppercase tracking-wider text-muted mono-nums">
+    <span class={`h-2 w-2 rounded-full ${dot[accent]}`}></span>
+    {label}
+  </div>
+  <h3 class="mt-3 text-lg font-semibold text-fg">{title}</h3>
+  <p class="mt-2 text-sm leading-relaxed text-muted">{description}</p>
+</div>
